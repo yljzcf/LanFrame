@@ -1,5 +1,9 @@
 # 推送 v0.3.0 这样的标签时，编译 Windows 版和 Mac 版，发布到 GitHub Release。
 # 用 Mac 机器：Mac 版的托盘要用 cgo，还要用 lipo、codesign、ditto；Windows 版在 Mac 上交叉编译。
+# 要用到仓库 Secrets 里的三项（见 docs/开发说明.md 的"自动更新"）：
+#   UPDATE_SIGNING_KEY     给更新清单签名的私钥
+#   MAC_SIGN_P12           Mac 版签名用的自签名证书（p12 文件的 base64）
+#   MAC_SIGN_P12_PASSWORD  p12 文件的密码
 name: 发布安装包
 
 on:
@@ -8,6 +12,10 @@ on:
 
 permissions:
   contents: write
+
+env:
+  # 自签名证书的 SHA-1，公开的，不是秘密。换证书时一起改
+  MAC_SIGN_IDENTITY: 4CC45739F5E74F428F41640EBAF73A05B1C6F6E8
 
 jobs:
   release:
@@ -19,16 +27,42 @@ jobs:
           go-version-file: go.mod
       - name: 检查和测试
         run: go vet ./... && go test ./...
+      - name: 导入 Mac 签名证书
+        env:
+          MAC_SIGN_P12: ${{ secrets.MAC_SIGN_P12 }}
+          MAC_SIGN_P12_PASSWORD: ${{ secrets.MAC_SIGN_P12_PASSWORD }}
+        # 放进一个临时钥匙串，编译时 build.sh 用 MAC_SIGN_KEYCHAIN 找到它
+        run: |
+          KC="$RUNNER_TEMP/sign.keychain-db"
+          KCPW="$(openssl rand -hex 16)"
+          echo "$MAC_SIGN_P12" | base64 -d > "$RUNNER_TEMP/sign.p12"
+          security create-keychain -p "$KCPW" "$KC"
+          security set-keychain-settings "$KC"
+          security unlock-keychain -p "$KCPW" "$KC"
+          security import "$RUNNER_TEMP/sign.p12" -k "$KC" -P "$MAC_SIGN_P12_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KCPW" "$KC" > /dev/null
+          rm "$RUNNER_TEMP/sign.p12"
+          echo "MAC_SIGN_KEYCHAIN=$KC" >> "$GITHUB_ENV"
       - name: 编译
         # 标签 v0.3.0 → 版本号 0.3.0，写进 Mac 版的 Info.plist
         run: VERSION="${GITHUB_REF_NAME#v}" ./build.sh
+      - name: 确认 Mac 版用的是固定证书
+        run: codesign -d -r- "dist/局域网审片.app" 2>&1 | grep -q 'certificate'
+      - name: 签名更新清单
+        env:
+          UPDATE_SIGNING_KEY: ${{ secrets.UPDATE_SIGNING_KEY }}
+        run: >
+          go run ./tools/signupdate -version "${GITHUB_REF_NAME#v}" -o dist/update.json
+          dist/lan-video-review-windows.exe dist/lan-video-review-mac.zip
       - name: 发布
         env:
           GH_TOKEN: ${{ github.token }}
-        # 附件名要和下载页一致：server.go 的 downloadFiles 按 lan-video-review 开头、.exe/.zip 结尾找安装包
+        # 附件名要和下载页一致：server.go 的 downloadFiles 按 lan-video-review 开头、.exe/.zip 结尾找安装包；
+        # 程序检查更新时找的是 update.json（internal/update/fetch.go）
         run: >
           gh release create "$GITHUB_REF_NAME"
           dist/lan-video-review-windows.exe
           dist/lan-video-review-mac.zip
+          dist/update.json
           --title "$GITHUB_REF_NAME"
           --notes-file packaging/release-notes.md

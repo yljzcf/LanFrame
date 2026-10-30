@@ -39,6 +39,7 @@ type App struct {
 	peers   *Peers
 	client  *http.Client // 访问其他电脑的小请求
 	stream  *http.Client // 转发视频，不设总超时
+	upd     *updater
 
 	mu       sync.Mutex
 	id       *store.Identity
@@ -60,6 +61,7 @@ func newApp(dataDir string, port int) (*App, error) {
 		id:      id,
 		videos:  media.NewVideoLib(),
 		peers:   newPeers(),
+		upd:     newUpdater(dataDir),
 		client:  &http.Client{Timeout: 30 * time.Second},
 		stream: &http.Client{Transport: &http.Transport{
 			DialContext:           (&net.Dialer{Timeout: 3 * time.Second}).DialContext,
@@ -192,6 +194,7 @@ func (a *App) setPaused(on bool) error {
 	platform.SetKeepAwake(!on)
 	if !on {
 		go a.rescan()
+		a.upd.kick(updateKick{github: true}) // 暂停期间没有检查更新，恢复时查一次
 	}
 	log.Printf("服务%s", map[bool]string{true: "已暂停", false: "已恢复"}[on])
 	return nil
@@ -214,12 +217,16 @@ func (a *App) setAutostart(on bool) error {
 	return err
 }
 
+// hasTray 判断有没有显示托盘图标。
+func (a *App) hasTray() bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.onChange != nil
+}
+
 // quit 退出程序：有托盘时让托盘收尾，否则直接退出。
 func (a *App) quit() {
-	a.mu.Lock()
-	tray := a.onChange != nil
-	a.mu.Unlock()
-	if tray {
+	if a.hasTray() {
 		systray.Quit()
 		return
 	}
@@ -327,6 +334,7 @@ func (a *App) start() {
 	go a.syncLoop()
 	go a.manualLoop()
 	go a.subnetScanLoop()
+	go a.updateLoop()
 	go func() {
 		for i := 0; ; i++ {
 			time.Sleep(5 * time.Second)

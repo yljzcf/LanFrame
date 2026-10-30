@@ -16,6 +16,8 @@ func (a *App) runTray(url string) {
 		mStatus := systray.AddMenuItem("", "")
 		mStatus.Disable()
 		mOpen := systray.AddMenuItem("打开界面", "在浏览器里打开审片界面")
+		mUpdate := systray.AddMenuItem("", "换上已经下载好的新版本，程序会重启几秒钟")
+		mUpdate.Hide()
 		systray.AddSeparator()
 		mRun := systray.AddMenuItemCheckbox("运行服务", "取消后程序留在后台，但不再分享视频、不再同步批注", true)
 		mAuto := systray.AddMenuItemCheckbox("开机启动", "登录电脑时自动打开程序", false)
@@ -52,6 +54,12 @@ func (a *App) runTray(url string) {
 			if !platform.AutostartSupported() {
 				mAuto.Disable()
 			}
+			if u := a.updateState(); u.Ready && u.Blocked == "" {
+				mUpdate.SetTitle("更新到 " + u.Latest)
+				mUpdate.Show()
+			} else {
+				mUpdate.Hide()
+			}
 			if runtime.GOOS == "darwin" {
 				systray.SetTemplateIcon(platform.TrayTemplateIcon(c.Paused), platform.TrayTemplateIcon(c.Paused))
 			} else {
@@ -67,6 +75,8 @@ func (a *App) runTray(url string) {
 				select {
 				case <-mOpen.ClickedCh:
 					openBrowser(url)
+				case <-mUpdate.ClickedCh:
+					go a.applyUpdateFromTray()
 				case <-mRun.ClickedCh:
 					err = a.setPaused(!a.config().Paused)
 				case <-mAuto.ClickedCh:

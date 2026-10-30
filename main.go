@@ -34,6 +34,7 @@ func main() {
 	noTray := flag.Bool("no-tray", false, "不显示托盘图标（开发测试用）")
 	child := flag.Bool("child", false, "内部使用：不转到后台，直接运行")
 	autostart := flag.Bool("autostart", false, "内部使用：开机启动时由系统带上")
+	restart := flag.Bool("restart", false, "内部使用：自动更新后重启，等旧版本让出端口")
 	flag.Parse()
 
 	defaultData := *dataDir == ""
@@ -58,6 +59,15 @@ func main() {
 	for try := 0; ; try++ {
 		if ln, err = net.Listen("tcp", fmt.Sprintf(":%d", *port)); err == nil {
 			break
+		}
+		// 自动更新后重启：旧版本还没退出，等它让出端口。等不到就算了，旧版本还在运行，不弹框
+		if *restart {
+			if try == 40 {
+				log.Printf("等了 20 秒旧版本还没让出端口，新版本不启动：%v", err)
+				return
+			}
+			time.Sleep(500 * time.Millisecond)
+			continue
 		}
 		// 程序已经在运行时，再次双击只打开界面
 		if alreadyRunning(*port) {
@@ -92,7 +102,7 @@ func main() {
 	platform.SetKeepAwake(!app.paused())
 	go func() { log.Fatal(http.Serve(ln, app.routes())) }()
 
-	log.Printf("已启动 %s：%s（开机启动：%v，服务暂停：%v）", version, url, *autostart, app.paused())
+	log.Printf("已启动 %s：%s（开机启动：%v，自动更新后重启：%v，服务暂停：%v）", version, url, *autostart, *restart, app.paused())
 	switch {
 	case *autostart && app.config().SilentStart:
 		log.Printf("开机后静默运行，不打开浏览器")

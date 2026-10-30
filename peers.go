@@ -19,6 +19,7 @@ import (
 
 	"lanreview/internal/media"
 	"lanreview/internal/store"
+	"lanreview/internal/update"
 )
 
 const (
@@ -39,6 +40,8 @@ type Peer struct {
 	Online      bool                `json:"online"`
 	LastSeen    int64               `json:"lastSeen"`
 	KeyMismatch bool                `json:"keyMismatch"`
+	Version     string              `json:"version,omitempty"` // 对方运行的版本
+	Update      string              `json:"update,omitempty"`  // 对方缓存里可以给别人下载的版本
 	Videos      []*media.VideoEntry `json:"videos"`
 }
 
@@ -220,11 +223,13 @@ func (a *App) discoveryLoop() {
 }
 
 type peerInfo struct {
-	App    string `json:"app"`
-	ID     string `json:"id"`
-	Name   string `json:"name"`
-	Port   int    `json:"port"`
-	Locked bool   `json:"locked"` // 对方设了团队口令
+	App     string `json:"app"`
+	ID      string `json:"id"`
+	Name    string `json:"name"`
+	Port    int    `json:"port"`
+	Locked  bool   `json:"locked"`            // 对方设了团队口令
+	Version string `json:"version,omitempty"` // 0.3.0 起才有
+	Update  string `json:"update,omitempty"`  // 缓存里可以给别人下载的版本，见 update.go
 }
 
 func (a *App) fetchInfo(ctx context.Context, addr string) (*peerInfo, error) {
@@ -351,6 +356,10 @@ func (a *App) syncPeer(p Peer) {
 		return
 	}
 	a.peers.seen(info.ID, info.Name, p.Addr)
+	a.peers.update(p.ID, func(p *Peer) { p.Version, p.Update = info.Version, info.Update })
+	if update.Newer(info.Update, a.upd.known()) {
+		a.upd.kick(updateKick{}) // 对方有更新的版本，去要一份
+	}
 	var videos []*media.VideoEntry
 	err = a.getJSON(ctx, "http://"+p.Addr+"/peer/videos", &videos)
 	a.peers.update(p.ID, func(p *Peer) {

@@ -94,6 +94,10 @@ a { color: var(--accent); }
   display: flex; align-items: center; gap: 12px; padding: 8px 14px;
   background: #3a3220; color: var(--warn); border-bottom: 1px solid var(--line);
 }
+#update-bar {
+  display: flex; align-items: center; gap: 12px; padding: 8px 14px;
+  background: #1d2a3a; color: #9ccaff; border-bottom: 1px solid var(--line);
+}
 #toast {
   position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); z-index: 80;
   background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px; padding: 8px 16px;

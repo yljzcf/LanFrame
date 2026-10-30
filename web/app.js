@@ -60,6 +60,8 @@ async function refresh() {
   }
   $('#me').textContent = `${s.me.name} · 设备码 ${s.me.code}`;
   $('#paused-bar').hidden = !s.paused;
+  if (renderUpdate()) return;
+  renderUpdateSettings();
   $('#share-error').hidden = !s.shareError;
   if ($('#share-error-text').textContent !== (s.shareError || '')) $('#share-error-text').textContent = s.shareError || '';
   renderVideos();
@@ -1214,6 +1216,118 @@ $('#btn-resume').onclick = async () => {
   }
 };
 
+// ---------- 自动更新 ----------
+// 程序在后台检查、下载新版本，下载好后在顶部提示，用户点"立即更新"才换上（程序会重启几秒钟）。
+
+let seenVersion = null; // 打开网页时程序的版本，变了说明程序已经换成新版本
+let updateLater = '';   // 点过"稍后"的版本，这次打开网页期间不再提示
+let updatingTo = '';    // 点了"立即更新"、正在等的版本
+let updatingSince = 0;
+let updateBarKey = '';
+
+function setUpdateBar(text, buttons = '') {
+  $('#update-bar').hidden = false;
+  if (updateBarKey === text + buttons) return; // 每次轮询都重画的话，按钮会闪
+  updateBarKey = text + buttons;
+  $('#update-text').textContent = text;
+  $('#update-actions').innerHTML = buttons;
+}
+
+// renderUpdate 显示顶部的更新提示。程序已经换成新版本时刷新网页，返回 true。
+function renderUpdate() {
+  if (seenVersion === null) seenVersion = S.version;
+  if (S.version !== seenVersion) {
+    // 旧网页的脚本可能和新程序对不上，刷新一下。正在写批注或回复时不打断
+    const typing = [...document.querySelectorAll('textarea')].some((t) => t.offsetParent && t.value.trim());
+    if (!typing) {
+      location.reload();
+      return true;
+    }
+    setUpdateBar(`程序已经更新到 ${S.version}。发布完手上的批注后，请刷新页面。`, '<button class="primary" data-act="reload">刷新页面</button>');
+    return false;
+  }
+  const u = S.update || {};
+  if (updatingTo) {
+    setUpdateBar(Date.now() - updatingSince > 60000
+      ? `更新到 ${updatingTo} 好像没有完成。请退出程序后重新打开；还是不行的话，到配置文件夹的 log.txt 里看原因。`
+      : `正在更新到 ${updatingTo}，程序会重启几秒钟，请稍候…`);
+  } else if (u.ready && u.latest !== updateLater) {
+    const later = '<button data-act="later">稍后</button>';
+    if (u.blocked) {
+      setUpdateBar(`新版本 ${u.latest} 已经下载好，但不能自动换上：${u.blocked}。`,
+        (u.download ? `<a class="btn" href="${esc(u.download)}" download>手动下载新版本</a>` : '') + later);
+    } else {
+      setUpdateBar(`新版本 ${u.latest} 已经下载好。更新时程序会重启几秒钟，正在看你视频的同事会短暂中断。`,
+        `<button class="primary" data-act="apply">立即更新</button>${later}`);
+    }
+  } else {
+    $('#update-bar').hidden = true;
+  }
+  return false;
+}
+
+// renderUpdateSettings 更新"设置"里程序版本那一行（设置窗口开着时每次轮询都会刷新）。
+function renderUpdateSettings() {
+  const box = $('#su-update');
+  if (!box) return;
+  const u = S.update || {};
+  let status;
+  let buttons = '';
+  if (!u.supported) {
+    status = '开发版，不检查更新';
+  } else if (updatingTo) {
+    status = `正在更新到 ${updatingTo}…`;
+  } else if (u.ready) {
+    status = `新版本 ${u.latest} 已经下载好${u.blocked ? `，但不能自动换上：${u.blocked}` : ''}`;
+    if (!u.blocked) buttons = '<button class="primary" data-act="apply">立即更新</button>';
+    else if (u.download) buttons = `<a class="btn" href="${esc(u.download)}" download>手动下载新版本</a>`;
+  } else {
+    if (u.busy) status = `${u.busy}…`;
+    else if (u.error) status = u.error;
+    else status = u.checked ? `已是最新（${fmtTime(u.checked)} 检查过）` : '已是最新';
+    buttons = `<button data-act="check" ${u.busy ? 'disabled' : ''}>检查更新</button>`;
+  }
+  const html = `<span class="muted">程序版本 ${esc(S.version)} · ${esc(status)}</span><span class="spacer"></span>${buttons}`;
+  if (box.dataset.html !== html) {
+    box.innerHTML = html;
+    box.dataset.html = html;
+  }
+}
+
+async function applyUpdate() {
+  const to = S.update?.latest;
+  try {
+    await post('/api/update/apply');
+  } catch (e) {
+    alert(`更新失败：${e.message}`);
+    return;
+  }
+  updatingTo = to;
+  updatingSince = Date.now();
+  if (modalKind === 'setup') closeModal();
+  renderUpdate();
+  // 程序重启期间轮询都会失败，到时间了也要提示"好像没有完成"
+  setTimeout(renderUpdate, 61000);
+}
+
+async function updateAction(e) {
+  const act = e.target.closest('[data-act]')?.dataset.act;
+  if (act === 'apply') applyUpdate();
+  else if (act === 'reload') location.reload();
+  else if (act === 'later') {
+    updateLater = S.update?.latest || '';
+    $('#update-bar').hidden = true;
+  } else if (act === 'check') {
+    try {
+      await post('/api/update/check');
+      await refresh();
+    } catch (err) {
+      $('#su-err').textContent = err.message;
+    }
+  }
+}
+$('#update-actions').onclick = updateAction;
+
 // ---------- 弹窗：设置、添加电脑、使用说明 ----------
 
 function openModal(kind, html) {
@@ -1264,13 +1378,14 @@ function openSetup(first) {
     <div class="field"><label>3. 团队口令（可选）：设置后，只有填了相同口令的电脑能看到你的视频和批注。团队里每个人都要填一样的；不填就是局域网里谁都能看。</label>
       <input type="text" id="su-key" maxlength="64" placeholder="不填则不设口令" value="${esc(S?.teamKey || '')}"></div>
     <div class="section">
-      <div class="row"><span class="muted">你的设备码：<b id="su-code">${esc(S?.me?.code || '')}</b>${S?.version ? ` · 程序版本 ${esc(S.version)}` : ''}</span>
+      <div class="row"><span class="muted">你的设备码：<b id="su-code">${esc(S?.me?.code || '')}</b>${first && S?.version ? ` · 程序版本 ${esc(S.version)}` : ''}</span>
         <span class="spacer"></span>
         ${first ? '' : '<a class="btn" href="/api/identity" download>导出身份文件</a>'}
         <label class="btn">${first ? '在别的电脑用过？导入身份文件' : '导入身份文件'}<input type="file" id="su-import" accept=".json,application/json" hidden></label></div>
       <p class="muted">换电脑时，在旧电脑导出身份文件、在新电脑导入，你写过的批注仍然可以修改和删除。身份文件相当于你的签名，不要发给别人。</p>
     </div>
-    ${first ? '' : `<div class="section">
+    ${first ? '' : `<div class="section row" id="su-update"></div>
+    <div class="section">
       <div class="muted" style="margin-bottom:8px">后台运行（托盘图标的菜单里也能改，改了立即生效）</div>
       <label class="toggle"><input type="checkbox" data-toggle="running" ${S.paused ? '' : 'checked'}>
         <span>运行服务<br><span class="muted">取消后程序留在后台，但不分享视频、不同步批注，同事那边显示你离线</span></span></label>
@@ -1301,6 +1416,8 @@ function openSetup(first) {
     if (t) browse(t.dataset.p);
   };
   $('#su-cancel')?.addEventListener('click', closeModal);
+  $('#su-update')?.addEventListener('click', updateAction);
+  renderUpdateSettings();
   $('#su-import').addEventListener('change', async (e) => {
     const file = e.target.files[0];
     e.target.value = '';
@@ -1414,6 +1531,7 @@ function openHelp() {
       <li>"导出批注"会把当前版本的所有批注（带截图和回复）导出成一个网页文件，浏览器打开就能看，也能打印成 PDF。</li>
       <li>分享视频期间不要退出程序，也不要合上笔记本让电脑睡眠，否则同事播不了你的视频。</li>
       <li>浏览器只能播放 H.264 等常见编码，ProRes 等格式暂不支持。</li>
+      <li>程序会在后台下载新版本，下载好后顶部会提示，点"立即更新"程序重启几秒钟就换好了。</li>
     </ul>
     <div class="modal-actions"><button class="primary" id="help-ok">知道了</button></div>`);
   $('#help-ok').onclick = closeModal;

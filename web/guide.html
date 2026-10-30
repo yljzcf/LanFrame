@@ -22,7 +22,7 @@
 
   <h2>1. 下载程序</h2>
   {{if .Files}}
-  <div class="files">{{range .Files}}<a href="/download/{{.}}">{{.}}</a>{{end}}</div>
+  <div class="files">{{range .Files}}<a href="/download/{{.Name}}">{{.Name}}</a>{{end}}</div>
   <p class="muted">Windows 选 .exe；Mac 选 mac.zip（Apple 芯片和 Intel 芯片通用），下载后双击解压，得到"局域网审片"，可以拖进"应用程序"文件夹。</p>
   {{else}}
   <p class="muted">这台电脑上没有放安装包，请找{{if .Name}} {{.Name}} {{end}}要一份。</p>

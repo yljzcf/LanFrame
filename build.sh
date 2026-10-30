@@ -4,6 +4,8 @@
 #   局域网审片.app                 Mac 版，Apple 芯片和 Intel 芯片通用
 #   lan-video-review-mac.zip      打包好的 Mac 版，给下载页用（保留可执行权限）
 # 可选：VERSION=0.3.0 ./build.sh 指定版本号，写进程序和 Mac 版的 Info.plist；不给的话沿用 packaging/Info.plist 里的
+# 可选：MAC_SIGN_IDENTITY=证书的 SHA-1 用固定的证书给 Mac 版签名（发布时 CI 会设，见 release.yml），
+#       证书不在默认钥匙串里时再用 MAC_SIGN_KEYCHAIN 指定钥匙串。不设就是临时签名
 set -e
 cd "$(dirname "$0")"
 VERSION="${VERSION:-$(plutil -extract CFBundleShortVersionString raw packaging/Info.plist)}"
@@ -32,6 +34,7 @@ plutil -replace CFBundleShortVersionString -string "$VERSION" "$APP/Contents/Inf
 plutil -replace CFBundleVersion -string "$VERSION" "$APP/Contents/Info.plist"
 iconutil -c icns dist/AppIcon.iconset -o "$APP/Contents/Resources/AppIcon.icns"
 rm -r dist/AppIcon.iconset
-codesign --force --deep -s - "$APP"
+# 临时签名每次编译都不一样，系统会当成新程序，重新询问本地网络、桌面文件夹等权限；固定证书签的才能保留
+codesign --force --deep ${MAC_SIGN_KEYCHAIN:+--keychain "$MAC_SIGN_KEYCHAIN"} -s "${MAC_SIGN_IDENTITY:--}" "$APP"
 (cd dist && ditto -c -k --keepParent "局域网审片.app" lan-video-review-mac.zip)
 ls -lh dist

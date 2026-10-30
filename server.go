@@ -38,6 +38,9 @@ func (a *App) routes() http.Handler {
 	peer.HandleFunc("GET /peer/records", a.teamOnly(a.peerRecords))
 	peer.HandleFunc("GET /peer/record/{id}", a.teamOnly(a.peerRecord))
 	peer.HandleFunc("GET /peer/image/{name}", a.teamOnly(a.peerImage))
+	// 新版本的安装包本来就是公开的，靠签名防伪，不需要团队口令
+	peer.HandleFunc("GET /peer/update", a.peerUpdate)
+	peer.HandleFunc("GET /peer/update/{name}", a.peerUpdateFile)
 	mux.Handle("/peer/", notFromBrowser(peer))
 	mux.HandleFunc("GET /download/{name}", a.download)
 
@@ -61,6 +64,8 @@ func (a *App) routes() http.Handler {
 	api.HandleFunc("POST /api/identity", a.apiImportIdentity)
 	api.HandleFunc("POST /api/quit", a.apiQuit)
 	api.HandleFunc("POST /api/toggle", a.apiToggle)
+	api.HandleFunc("POST /api/update/check", a.apiUpdateCheck)
+	api.HandleFunc("POST /api/update/apply", a.apiUpdateApply)
 	// 只看来源地址挡不住跨站请求：用户浏览的任何网页都能让浏览器往 localhost 发 POST，
 	// 所以再拒绝其他网站发来的修改请求
 	mux.Handle("/api/", localOnly(http.NewCrossOriginProtection().Handler(api)))
@@ -155,7 +160,10 @@ func httpErr(w http.ResponseWriter, err error, code int) {
 
 func (a *App) peerInfo(w http.ResponseWriter, r *http.Request) {
 	c := a.config()
-	writeJSON(w, peerInfo{appName, a.me().ID, c.Nickname, a.port, c.TeamKey != ""})
+	writeJSON(w, peerInfo{
+		App: appName, ID: a.me().ID, Name: c.Nickname, Port: a.port, Locked: c.TeamKey != "",
+		Version: version, Update: a.upd.cache.Version(),
+	})
 }
 
 // listing 是本机分享的视频列表，带上版本信息。
@@ -238,30 +246,35 @@ func downloadDir() string {
 	return dir
 }
 
-// downloadFiles 列出安装包给同事下载。
+type downloadFile struct{ Name, Path string }
+
+// downloadFiles 列出安装包给同事下载：自动更新缓存里的（最新，验过签名）优先，再加上放在程序旁边的。
 // Mac 版要用 zip，浏览器下载的 .app 或裸程序会丢掉可执行权限。
-func downloadFiles() []string {
-	dir := downloadDir()
-	if dir == "" {
-		return nil
+func (a *App) downloadFiles() []downloadFile {
+	var out []downloadFile
+	cached := a.upd.cache.Files()
+	for name, path := range cached {
+		out = append(out, downloadFile{name, path})
 	}
-	entries, _ := os.ReadDir(dir)
-	var out []string
-	for _, e := range entries {
-		n := e.Name()
-		if e.Type().IsRegular() && strings.HasPrefix(n, appName) && (strings.HasSuffix(n, ".exe") || strings.HasSuffix(n, ".zip")) {
-			out = append(out, n)
+	if dir := downloadDir(); dir != "" {
+		entries, _ := os.ReadDir(dir)
+		for _, e := range entries {
+			n := e.Name()
+			if _, dup := cached[n]; !dup && e.Type().IsRegular() && strings.HasPrefix(n, appName) && (strings.HasSuffix(n, ".exe") || strings.HasSuffix(n, ".zip")) {
+				out = append(out, downloadFile{n, filepath.Join(dir, n)})
+			}
 		}
 	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out
 }
 
 func (a *App) download(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	for _, f := range downloadFiles() {
-		if f == name {
+	for _, f := range a.downloadFiles() {
+		if f.Name == name {
 			w.Header().Set("Content-Disposition", `attachment; filename="`+name+`"`)
-			http.ServeFile(w, r, filepath.Join(downloadDir(), name))
+			http.ServeFile(w, r, f.Path)
 			return
 		}
 	}
@@ -281,7 +294,7 @@ func (a *App) index(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	guideTmpl.Execute(w, map[string]any{
 		"Name":  a.config().Nickname,
-		"Files": downloadFiles(),
+		"Files": a.downloadFiles(),
 	})
 }
 
@@ -317,6 +330,7 @@ func (a *App) apiState(w http.ResponseWriter, r *http.Request) {
 		"peers":   peers,
 		"os":      runtime.GOOS,
 		"version": version,
+		"update":  a.updateState(),
 	}
 	if st != nil {
 		resp["syncDir"] = st.Dir()

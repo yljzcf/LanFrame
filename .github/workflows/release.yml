@@ -1,0 +1,34 @@
+# 推送 v0.3.0 这样的标签时，编译 Windows 版和 Mac 版，发布到 GitHub Release。
+# 用 Mac 机器：Mac 版的托盘要用 cgo，还要用 lipo、codesign、ditto；Windows 版在 Mac 上交叉编译。
+name: 发布安装包
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - name: 检查和测试
+        run: go vet ./... && go test ./...
+      - name: 编译
+        # 标签 v0.3.0 → 版本号 0.3.0，写进 Mac 版的 Info.plist
+        run: VERSION="${GITHUB_REF_NAME#v}" ./build.sh
+      - name: 发布
+        env:
+          GH_TOKEN: ${{ github.token }}
+        # 附件名要和下载页一致：server.go 的 downloadFiles 按 lan-video-review 开头、.exe/.zip 结尾找安装包
+        run: >
+          gh release create "$GITHUB_REF_NAME"
+          dist/lan-video-review-windows.exe
+          dist/lan-video-review-mac.zip
+          --title "$GITHUB_REF_NAME"
+          --notes-file packaging/release-notes.md

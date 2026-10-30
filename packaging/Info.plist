@@ -17,7 +17,7 @@
 	<key>CFBundleVersion</key>
 	<string>2</string>
 	<key>LSMinimumSystemVersion</key>
-	<string>11.0</string>
+	<string>13.0</string>
 	<!-- 没有窗口和 Dock 图标，界面在浏览器里 -->
 	<key>LSUIElement</key>
 	<true/>

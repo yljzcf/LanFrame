@@ -13,6 +13,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"time"
+
+	"lanreview/internal/platform"
 )
 
 //go:embed web
@@ -41,7 +43,7 @@ func main() {
 		log.Fatal(err)
 	}
 	setupLog(*dataDir)
-	if !*child && detachFromApp() {
+	if !*child && platform.DetachFromApp() {
 		return
 	}
 
@@ -74,13 +76,13 @@ func main() {
 		fatal("局域网审片无法启动。", err)
 	}
 	// 开机启动项里记着程序路径，程序被挪过位置的话这里顺便更新
-	if autostartEnabled() {
-		if err := setAutostart(true, app.autostartArgs()); err != nil {
+	if platform.AutostartEnabled() {
+		if err := platform.SetAutostart(true, app.autostartArgs()); err != nil {
 			log.Printf("更新开机启动项失败：%v", err)
 		}
 	}
 	app.start()
-	setKeepAwake(!app.paused())
+	platform.SetKeepAwake(!app.paused())
 	go func() { log.Fatal(http.Serve(ln, app.routes())) }()
 
 	log.Printf("已启动：%s（开机启动：%v，服务暂停：%v）", url, *autostart, app.paused())
@@ -99,7 +101,7 @@ func main() {
 // fatal 写日志、弹出错误提示框后退出。程序没有窗口，不弹框的话用户只会觉得"双击没反应"。
 func fatal(msg string, err error) {
 	log.Printf("%s（%v）", msg, err)
-	showError("局域网审片无法启动", msg)
+	platform.ShowError("局域网审片无法启动", msg)
 	os.Exit(1)
 }
 

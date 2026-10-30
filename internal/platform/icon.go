@@ -1,4 +1,4 @@
-package main
+package platform
 
 import (
 	"bytes"
@@ -94,14 +94,14 @@ func glyph(paused bool) shapeFunc {
 }
 
 // trayTemplateIcon 是 Mac 菜单栏用的黑色模板图。
-func trayTemplateIcon(paused bool) []byte {
+func TrayTemplateIcon(paused bool) []byte {
 	frame := minus(roundRect(0.06, 0.14, 0.94, 0.86, 0.14), roundRect(0.14, 0.22, 0.86, 0.78, 0.07))
 	black := color.NRGBA{0, 0, 0, 255}
 	return render(36, []layer{{frame, black}, {glyph(paused), black}})
 }
 
 // trayWindowsIcon 是 Windows 通知区域用的彩色图标（ICO 格式，里面包一张 PNG）。
-func trayWindowsIcon(paused bool) []byte {
+func TrayWindowsIcon(paused bool) []byte {
 	bg := color.NRGBA{0x0a, 0x84, 0xff, 255}
 	if paused {
 		bg = color.NRGBA{0x8b, 0x8f, 0x98, 255}

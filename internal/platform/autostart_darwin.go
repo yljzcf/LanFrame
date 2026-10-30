@@ -1,4 +1,4 @@
-package main
+package platform
 
 import (
 	"bytes"
@@ -18,14 +18,14 @@ func autostartPath() string {
 	return filepath.Join(home, "Library", "LaunchAgents", launchAgentLabel+".plist")
 }
 
-func autostartSupported() bool { return true }
+func AutostartSupported() bool { return true }
 
-func autostartEnabled() bool {
+func AutostartEnabled() bool {
 	_, err := os.Stat(autostartPath())
 	return err == nil
 }
 
-func setAutostart(on bool, args []string) error {
+func SetAutostart(on bool, args []string) error {
 	path := autostartPath()
 	if !on {
 		if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
@@ -66,5 +66,5 @@ func setAutostart(on bool, args []string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
-	return writeFileAtomic(path, b.Bytes())
+	return os.WriteFile(path, b.Bytes(), 0o644)
 }

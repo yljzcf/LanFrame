@@ -19,6 +19,10 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"lanreview/internal/media"
+	"lanreview/internal/platform"
+	"lanreview/internal/store"
 )
 
 func (a *App) routes() http.Handler {
@@ -129,10 +133,10 @@ func (a *App) peerInfo(w http.ResponseWriter, r *http.Request) {
 }
 
 // listing 是本机分享的视频列表，带上版本信息。
-func (a *App) listing() []*VideoEntry {
+func (a *App) listing() []*media.VideoEntry {
 	vs, st := a.getVersions(), a.getStore()
 	if vs == nil || st == nil {
-		return []*VideoEntry{}
+		return []*media.VideoEntry{}
 	}
 	return vs.Listing(a.videos.List(), st.AnnotatedFPs())
 }
@@ -154,8 +158,8 @@ func (a *App) peerVideo(w http.ResponseWriter, r *http.Request) {
 	serveVideoFile(w, r, v)
 }
 
-func serveVideoFile(w http.ResponseWriter, r *http.Request, v *VideoInfo) {
-	f, err := os.Open(v.path)
+func serveVideoFile(w http.ResponseWriter, r *http.Request, v *media.VideoInfo) {
+	f, err := os.Open(v.Path())
 	if err != nil {
 		http.NotFound(w, r)
 		return
@@ -169,7 +173,7 @@ func serveVideoFile(w http.ResponseWriter, r *http.Request, v *VideoInfo) {
 func (a *App) peerRecords(w http.ResponseWriter, r *http.Request) {
 	st := a.getStore()
 	if st == nil {
-		writeJSON(w, []RecordStub{})
+		writeJSON(w, []store.RecordStub{})
 		return
 	}
 	writeJSON(w, st.List())
@@ -177,7 +181,7 @@ func (a *App) peerRecords(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) peerRecord(w http.ResponseWriter, r *http.Request) {
 	st, id := a.getStore(), r.PathValue("id")
-	if st == nil || !reRecordID.MatchString(id) || !st.Has(id) {
+	if st == nil || !store.ValidRecordID(id) || !st.Has(id) {
 		http.NotFound(w, r)
 		return
 	}
@@ -187,7 +191,7 @@ func (a *App) peerRecord(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) peerImage(w http.ResponseWriter, r *http.Request) {
 	st, name := a.getStore(), r.PathValue("name")
-	if st == nil || !reImageName.MatchString(name) {
+	if st == nil || !store.ValidImageName(name) {
 		http.NotFound(w, r)
 		return
 	}
@@ -272,13 +276,13 @@ func (a *App) apiState(w http.ResponseWriter, r *http.Request) {
 		// 设置过但共享文件夹暂时打不开时，仍算设置过，界面上提示原因，不回到欢迎页
 		"configured": c.Nickname != "" && c.ShareDir != "",
 		"shareError": a.shareError(),
-		"me":         map[string]string{"id": me.ID, "code": deviceCode(me.ID), "name": c.Nickname},
+		"me":         map[string]string{"id": me.ID, "code": store.DeviceCode(me.ID), "name": c.Nickname},
 		"shareDir":   c.ShareDir,
 		"teamKey":    c.TeamKey,
 		"paused":     c.Paused,
 		"toggles": map[string]bool{
-			"autostart":          autostartEnabled(),
-			"autostartSupported": autostartSupported(),
+			"autostart":          platform.AutostartEnabled(),
+			"autostartSupported": platform.AutostartSupported(),
 			"silentStart":        c.SilentStart,
 		},
 		"port":  a.port,
@@ -288,7 +292,7 @@ func (a *App) apiState(w http.ResponseWriter, r *http.Request) {
 		"os":    runtime.GOOS,
 	}
 	if st != nil {
-		resp["syncDir"] = st.dir
+		resp["syncDir"] = st.Dir()
 		resp["annVersion"] = st.Version()
 		resp["counts"] = st.AnnCounts()
 	}
@@ -328,7 +332,7 @@ func (a *App) apiFS(w http.ResponseWriter, r *http.Request) {
 	}
 	dirs := []item{}
 	for _, e := range entries {
-		if e.IsDir() && !strings.HasPrefix(e.Name(), ".") && !strings.HasPrefix(e.Name(), "$") && e.Name() != syncDirName {
+		if e.IsDir() && !strings.HasPrefix(e.Name(), ".") && !strings.HasPrefix(e.Name(), "$") && e.Name() != store.SyncDirName {
 			dirs = append(dirs, item{Name: e.Name(), Path: filepath.Join(p, e.Name())})
 		}
 	}
@@ -429,15 +433,15 @@ func (a *App) apiVersionRename(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) apiExportIdentity(w http.ResponseWriter, r *http.Request) {
 	me, c := a.me(), a.config()
-	name := fmt.Sprintf("审片身份-%s-%s.json", c.Nickname, deviceCode(me.ID))
+	name := fmt.Sprintf("审片身份-%s-%s.json", c.Nickname, store.DeviceCode(me.ID))
 	w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": name}))
 	w.Header().Set("Content-Type", "application/json")
-	data, _ := json.MarshalIndent(me.export(c.Nickname), "", "  ")
+	data, _ := json.MarshalIndent(me.Export(c.Nickname), "", "  ")
 	w.Write(data)
 }
 
 func (a *App) apiImportIdentity(w http.ResponseWriter, r *http.Request) {
-	var f identityFile
+	var f store.IdentityFile
 	if err := readJSON(r, &f); err != nil {
 		httpErr(w, errors.New("不是有效的身份文件"), http.StatusBadRequest)
 		return
@@ -447,7 +451,7 @@ func (a *App) apiImportIdentity(w http.ResponseWriter, r *http.Request) {
 		httpErr(w, err, http.StatusBadRequest)
 		return
 	}
-	writeJSON(w, map[string]string{"code": deviceCode(id.ID)})
+	writeJSON(w, map[string]string{"code": store.DeviceCode(id.ID)})
 }
 
 // apiQuit 从网页退出程序。
@@ -558,7 +562,7 @@ func (a *App) apiAnnotations(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{"items": items, "deleted": deleted, "version": st.Version()})
 }
 
-func checkContent(st *Store, c *Content) error {
+func checkContent(st *store.Store, c *store.Content) error {
 	if c.Frame < 0 || utf8.RuneCountInString(c.Text) > 5000 || len(c.Strokes) > 500 || len(c.Attachments) > 20 {
 		return errors.New("批注内容不合法")
 	}
@@ -569,7 +573,7 @@ func checkContent(st *Store, c *Content) error {
 		if name == "" {
 			continue
 		}
-		if !reImageName.MatchString(name) {
+		if !store.ValidImageName(name) {
 			return errors.New("图片名不对")
 		}
 		if _, err := os.Stat(st.ImagePath(name)); err != nil {
@@ -579,15 +583,15 @@ func checkContent(st *Store, c *Content) error {
 	return nil
 }
 
-func (a *App) newRecord(st *Store, me *Identity, typ, ann string) *Record {
-	return &Record{
+func (a *App) newRecord(st *store.Store, me *store.Identity, typ, ann string) *store.Record {
+	return &store.Record{
 		Type: typ, Ann: ann, Clock: st.NextClock(), Time: time.Now().UnixMilli(),
 		Author: me.ID, AuthorName: a.config().Nickname,
 	}
 }
 
-func (a *App) commit(w http.ResponseWriter, st *Store, me *Identity, rec *Record) {
-	if err := me.sign(rec); err != nil {
+func (a *App) commit(w http.ResponseWriter, st *store.Store, me *store.Identity, rec *store.Record) {
+	if err := me.Sign(rec); err != nil {
 		httpErr(w, err, http.StatusInternalServerError)
 		return
 	}
@@ -605,15 +609,15 @@ func (a *App) apiCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		Video   VideoRef
-		Content Content
+		Video   store.VideoRef
+		Content store.Content
 		ReplyTo string
 	}
 	if err := readJSON(r, &body); err != nil {
 		httpErr(w, err, http.StatusBadRequest)
 		return
 	}
-	var quote *Quote
+	var quote *store.Quote
 	if body.ReplyTo != "" {
 		// 回复：视频和时间码跟原批注一致，不带截图和画面标注，并带上原批注的内容
 		parent := st.Get(body.ReplyTo)
@@ -625,7 +629,7 @@ func (a *App) apiCreate(w http.ResponseWriter, r *http.Request) {
 			body.ReplyTo = parent.ReplyTo
 		}
 		items, _ := st.Annotations(parent.Video.FP, "")
-		quote = &Quote{Author: parent.Author, AuthorName: parent.AuthorName, Text: parent.Content.Text}
+		quote = &store.Quote{Author: parent.Author, AuthorName: parent.AuthorName, Text: parent.Content.Text}
 		for _, it := range items {
 			if it.ID == parent.ID {
 				quote.Text = it.Content.Text // 用原批注最新修改后的内容
@@ -635,7 +639,7 @@ func (a *App) apiCreate(w http.ResponseWriter, r *http.Request) {
 		body.Content.Frame, body.Content.Seconds = parent.Content.Frame, parent.Content.Seconds
 		body.Content.Shot, body.Content.Strokes = "", nil
 	}
-	if !reFP.MatchString(body.Video.FP) || body.Video.Owner == "" {
+	if !media.ValidFP(body.Video.FP) || body.Video.Owner == "" {
 		httpErr(w, errors.New("视频信息不完整"), http.StatusBadRequest)
 		return
 	}
@@ -645,7 +649,7 @@ func (a *App) apiCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	// 批注 ID 前半段是作者标记，后半段随机
 	me := a.me()
-	id := authorTag(me.ID) + randomHex(8)
+	id := store.AuthorTag(me.ID) + store.RandomHex(8)
 	rec := a.newRecord(st, me, "create", id)
 	rec.ID = id
 	rec.Video = &body.Video
@@ -658,7 +662,7 @@ func (a *App) apiCreate(w http.ResponseWriter, r *http.Request) {
 func (a *App) apiAction(w http.ResponseWriter, r *http.Request) {
 	st := a.getStore()
 	ann, action := r.PathValue("ann"), r.PathValue("action")
-	if st == nil || !reRecordID.MatchString(ann) {
+	if st == nil || !store.ValidRecordID(ann) {
 		http.NotFound(w, r)
 		return
 	}
@@ -670,14 +674,14 @@ func (a *App) apiAction(w http.ResponseWriter, r *http.Request) {
 	me := a.me()
 	isAuthor := create.Author == me.ID
 	rec := a.newRecord(st, me, action, ann)
-	rec.ID = randomHex(16)
+	rec.ID = store.RandomHex(16)
 	switch action {
 	case "edit":
 		if !isAuthor {
 			httpErr(w, errors.New("只有作者本人能修改"), http.StatusForbidden)
 			return
 		}
-		var body struct{ Content Content }
+		var body struct{ Content store.Content }
 		if err := readJSON(r, &body); err != nil {
 			httpErr(w, err, http.StatusBadRequest)
 			return

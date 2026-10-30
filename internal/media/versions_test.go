@@ -1,4 +1,4 @@
-package main
+package media
 
 import (
 	"os"
@@ -9,7 +9,7 @@ import (
 
 // 覆盖导出时，旧文件没有批注就直接顶替；有批注才问"是不是新版本"。
 func TestSamePathReplace(t *testing.T) {
-	vs := loadVersions(filepath.Join(t.TempDir(), "versions.json"))
+	vs := LoadVersions(filepath.Join(t.TempDir(), "versions.json"))
 	p1 := &VideoInfo{FP: "p1", Name: "LAX43_EP03.mp4", ModTime: 1}
 	vs.Update([]*VideoInfo{p1}, nil)
 	p2 := &VideoInfo{FP: "p2", Name: "LAX43_EP03.mp4", ModTime: 2}
@@ -38,7 +38,7 @@ func TestScanWaitsForFinishedFiles(t *testing.T) {
 	write("旧文件.mp4", 100, 2*time.Hour)
 	write("刚写完.mp4", 100, 20*time.Second)
 	write("空文件.mp4", 0, 2*time.Hour)
-	l := newVideoLib()
+	l := NewVideoLib()
 	names := func() map[string]bool {
 		out := map[string]bool{}
 		for _, v := range l.List() {
@@ -83,7 +83,7 @@ func TestBaseKey(t *testing.T) {
 }
 
 func TestVersionName(t *testing.T) {
-	vs := loadVersions(filepath.Join(t.TempDir(), "versions.json"))
+	vs := LoadVersions(filepath.Join(t.TempDir(), "versions.json"))
 	a := &VideoInfo{FP: "a", Name: "粗剪.mp4", ModTime: 1}
 	vs.Update([]*VideoInfo{a}, nil)
 	g := vs.Listing([]*VideoInfo{a}, nil)[0].Group
@@ -105,7 +105,7 @@ func TestVersionName(t *testing.T) {
 }
 
 func TestVersionSuggestAndMove(t *testing.T) {
-	vs := loadVersions(filepath.Join(t.TempDir(), "versions.json"))
+	vs := LoadVersions(filepath.Join(t.TempDir(), "versions.json"))
 	v1 := &VideoInfo{FP: "a", Name: "片子_v1.mp4", ModTime: 1}
 	vs.Update([]*VideoInfo{v1}, nil)
 	// 覆盖导出：旧文件不在了，出现一个指纹不同的新文件
@@ -136,7 +136,7 @@ func TestVersionSuggestAndMove(t *testing.T) {
 		t.Fatal("拆开后应该是两个视频")
 	}
 	// 拒绝过的不再提示，重新加载后也一样
-	vs2 := loadVersions(vs.path)
+	vs2 := LoadVersions(vs.path)
 	vs2.Update([]*VideoInfo{v2}, map[string]bool{"a": true})
 	for _, e := range vs2.Listing([]*VideoInfo{v2}, nil) {
 		if e.Suggest != "" {

@@ -1,4 +1,4 @@
-package main
+package store
 
 import (
 	"crypto/sha256"
@@ -16,7 +16,7 @@ import (
 	"time"
 )
 
-const syncDirName = "批注同步(别删)"
+const SyncDirName = "批注同步(别删)"
 
 var (
 	reRecordID  = regexp.MustCompile(`^[0-9a-f]{32}$`)
@@ -111,14 +111,14 @@ type Store struct {
 	version  int64
 }
 
-func openStore(shareDir string) (*Store, error) {
+func Open(shareDir string) (*Store, error) {
 	// 共享文件夹本身不存在时不能替用户建（比如移动硬盘没接上，会在本机建出一个同名空文件夹）
 	if st, err := os.Stat(shareDir); err != nil {
 		return nil, err
 	} else if !st.IsDir() {
 		return nil, fs.ErrNotExist
 	}
-	dir := filepath.Join(shareDir, syncDirName)
+	dir := filepath.Join(shareDir, SyncDirName)
 	for _, sub := range []string{"records", "images"} {
 		if err := os.MkdirAll(filepath.Join(dir, sub), 0o755); err != nil {
 			return nil, err
@@ -167,12 +167,12 @@ func validateRecord(r *Record) error {
 	}
 	switch r.Type {
 	case "create":
-		if r.ID != r.Ann || r.Video == nil || r.Content == nil || authorTag(r.Author) != r.Ann[:16] {
+		if r.ID != r.Ann || r.Video == nil || r.Content == nil || AuthorTag(r.Author) != r.Ann[:16] {
 			return errors.New("create 记录不完整")
 		}
 	case "edit", "delete":
 		// 只有作者本人能修改和删除，批注 ID 前半段就是作者标记
-		if authorTag(r.Author) != r.Ann[:16] {
+		if AuthorTag(r.Author) != r.Ann[:16] {
 			return errors.New("只有作者本人能修改或删除批注")
 		}
 		if r.Type == "edit" && r.Content == nil {
@@ -219,7 +219,7 @@ func (s *Store) addLocked(r *Record, persist bool) (bool, error) {
 		if err != nil {
 			return false, err
 		}
-		if err := writeFileAtomic(filepath.Join(s.dir, "records", r.ID+".json"), data); err != nil {
+		if err := WriteFileAtomic(filepath.Join(s.dir, "records", r.ID+".json"), data); err != nil {
 			return false, err
 		}
 	}
@@ -356,7 +356,7 @@ func (s *Store) PutImage(data []byte, ext string) (string, error) {
 	if _, err := os.Stat(path); err == nil {
 		return name, nil
 	}
-	return name, writeFileAtomic(path, data)
+	return name, WriteFileAtomic(path, data)
 }
 
 func sortRecords(rs []*Record) {
@@ -445,8 +445,8 @@ func (s *Store) AnnCounts() map[string]int {
 	return counts
 }
 
-func writeFileAtomic(path string, data []byte) error {
-	tmp := path + "." + randomHex(4) + ".tmp"
+func WriteFileAtomic(path string, data []byte) error {
+	tmp := path + "." + RandomHex(4) + ".tmp"
 	if err := os.WriteFile(tmp, data, 0o644); err != nil {
 		return err
 	}

@@ -1,4 +1,4 @@
-package main
+package media
 
 import (
 	"encoding/json"
@@ -9,6 +9,8 @@ import (
 	"sort"
 	"strings"
 	"sync"
+
+	"lanreview/internal/store"
 )
 
 // 版本组只记在视频分享者自己的电脑上（批注同步文件夹里的 versions.json，不参与同步），
@@ -39,7 +41,7 @@ type Versions struct {
 	Dismissed map[string]bool   `json:"dismissed"` // 已经回答过"不是"的指纹
 }
 
-func loadVersions(path string) *Versions {
+func LoadVersions(path string) *Versions {
 	vs := &Versions{path: path}
 	if data, err := os.ReadFile(path); err == nil {
 		json.Unmarshal(data, vs)
@@ -55,7 +57,7 @@ func loadVersions(path string) *Versions {
 
 func (vs *Versions) saveLocked() {
 	data, _ := json.MarshalIndent(vs, "", "  ")
-	writeFileAtomic(vs.path, data)
+	store.WriteFileAtomic(vs.path, data)
 }
 
 // 去掉文件名里常见的版本标记，用来判断两个文件是不是同一个片子的不同版本。
@@ -141,7 +143,7 @@ func (vs *Versions) Update(videos []*VideoInfo, hasAnn map[string]bool) {
 				}
 			}
 		}
-		vs.Groups = append(vs.Groups, &VersionGroup{ID: randomHex(8), Versions: []*VideoInfo{&c}})
+		vs.Groups = append(vs.Groups, &VersionGroup{ID: store.RandomHex(8), Versions: []*VideoInfo{&c}})
 		if cand != nil && !vs.Dismissed[v.FP] {
 			vs.Suggest[v.FP] = cand.ID
 		}
@@ -183,7 +185,7 @@ func (vs *Versions) Move(fp, group string) error {
 	v := from.Versions[i]
 	from.Versions = append(from.Versions[:i], from.Versions[i+1:]...)
 	if to == nil {
-		to = &VersionGroup{ID: randomHex(8)}
+		to = &VersionGroup{ID: store.RandomHex(8)}
 		vs.Groups = append(vs.Groups, to)
 	}
 	to.Versions = append(to.Versions, v)

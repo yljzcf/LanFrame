@@ -1,4 +1,4 @@
-package main
+package platform
 
 import (
 	"runtime"
@@ -24,4 +24,4 @@ func init() {
 }
 
 // setKeepAwake 运行服务期间阻止 Windows 空闲睡眠，暂停服务时取消。
-func setKeepAwake(on bool) { awakeCh <- on }
+func SetKeepAwake(on bool) { awakeCh <- on }

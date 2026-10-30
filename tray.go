@@ -5,6 +5,7 @@ import (
 	"runtime"
 
 	"fyne.io/systray"
+	"lanreview/internal/platform"
 )
 
 // runTray 显示托盘图标（Mac 在菜单栏，Windows 在右下角通知区域），会一直阻塞到退出。
@@ -39,7 +40,7 @@ func (a *App) runTray(url string) {
 				status = "服务已暂停"
 			}
 			mStatus.SetTitle("局域网审片 · " + name + " · " + status)
-			auto := autostartEnabled()
+			auto := platform.AutostartEnabled()
 			check(mRun, !c.Paused)
 			check(mAuto, auto)
 			check(mSilent, c.SilentStart)
@@ -48,13 +49,13 @@ func (a *App) runTray(url string) {
 			} else {
 				mSilent.Disable()
 			}
-			if !autostartSupported() {
+			if !platform.AutostartSupported() {
 				mAuto.Disable()
 			}
 			if runtime.GOOS == "darwin" {
-				systray.SetTemplateIcon(trayTemplateIcon(c.Paused), trayTemplateIcon(c.Paused))
+				systray.SetTemplateIcon(platform.TrayTemplateIcon(c.Paused), platform.TrayTemplateIcon(c.Paused))
 			} else {
-				systray.SetIcon(trayWindowsIcon(c.Paused))
+				systray.SetIcon(platform.TrayWindowsIcon(c.Paused))
 			}
 		}
 		refresh()
@@ -69,7 +70,7 @@ func (a *App) runTray(url string) {
 				case <-mRun.ClickedCh:
 					err = a.setPaused(!a.config().Paused)
 				case <-mAuto.ClickedCh:
-					err = a.setAutostart(!autostartEnabled())
+					err = a.setAutostart(!platform.AutostartEnabled())
 				case <-mSilent.ClickedCh:
 					err = a.setSilentStart(!a.config().SilentStart)
 				case <-mQuit.ClickedCh:

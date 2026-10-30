@@ -1,4 +1,4 @@
-package main
+package platform
 
 import (
 	"syscall"
@@ -6,7 +6,7 @@ import (
 )
 
 // showError 用系统的提示框显示错误。
-func showError(title, msg string) {
+func ShowError(title, msg string) {
 	t, _ := syscall.UTF16PtrFromString(title)
 	m, _ := syscall.UTF16PtrFromString(msg)
 	const mbIconError = 0x10

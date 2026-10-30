@@ -1,4 +1,4 @@
-package main
+package platform
 
 import (
 	"errors"
@@ -13,26 +13,26 @@ import (
 
 const runKey = `Software\Microsoft\Windows\CurrentVersion\Run`
 
-func autostartSupported() bool { return true }
+func AutostartSupported() bool { return true }
 
-func autostartEnabled() bool {
+func AutostartEnabled() bool {
 	k, err := registry.OpenKey(registry.CURRENT_USER, runKey, registry.QUERY_VALUE)
 	if err != nil {
 		return false
 	}
 	defer k.Close()
-	_, _, err = k.GetStringValue(appName)
+	_, _, err = k.GetStringValue(appID)
 	return err == nil
 }
 
-func setAutostart(on bool, args []string) error {
+func SetAutostart(on bool, args []string) error {
 	k, _, err := registry.CreateKey(registry.CURRENT_USER, runKey, registry.QUERY_VALUE|registry.SET_VALUE)
 	if err != nil {
 		return err
 	}
 	defer k.Close()
 	if !on {
-		if err := k.DeleteValue(appName); err != nil && !errors.Is(err, registry.ErrNotExist) {
+		if err := k.DeleteValue(appID); err != nil && !errors.Is(err, registry.ErrNotExist) {
 			return err
 		}
 		return nil
@@ -45,5 +45,5 @@ func setAutostart(on bool, args []string) error {
 	for _, a := range args {
 		parts = append(parts, syscall.EscapeArg(a))
 	}
-	return k.SetStringValue(appName, strings.Join(parts, " "))
+	return k.SetStringValue(appID, strings.Join(parts, " "))
 }

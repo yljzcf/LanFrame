@@ -1,4 +1,4 @@
-package main
+package platform
 
 import (
 	"log"
@@ -11,7 +11,7 @@ import (
 
 // detachFromApp：从 .app 双击启动时，在后台另起一个进程运行，自己马上退出。
 // 这样 .app 不会一直显示为"正在运行"，再次双击时能重新启动，进而打开界面。
-func detachFromApp() bool {
+func DetachFromApp() bool {
 	exe, err := os.Executable()
 	if err != nil || !strings.HasSuffix(filepath.Dir(exe), ".app/Contents/MacOS") {
 		return false

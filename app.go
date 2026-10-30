@@ -18,6 +18,9 @@ import (
 	"unicode/utf8"
 
 	"fyne.io/systray"
+	"lanreview/internal/media"
+	"lanreview/internal/platform"
+	"lanreview/internal/store"
 )
 
 type Config struct {
@@ -32,23 +35,23 @@ type Config struct {
 type App struct {
 	dataDir string
 	port    int
-	videos  *VideoLib
+	videos  *media.VideoLib
 	peers   *Peers
 	client  *http.Client // 访问其他电脑的小请求
 	stream  *http.Client // 转发视频，不设总超时
 
 	mu       sync.Mutex
-	id       *Identity
+	id       *store.Identity
 	cfg      Config
-	store    *Store
-	versions *Versions
+	store    *store.Store
+	versions *media.Versions
 	onChange func() // 设置变了时通知托盘刷新
 	trayOn   bool
 	shareErr string // 共享文件夹打不开的原因
 }
 
 func newApp(dataDir string, port int) (*App, error) {
-	id, err := loadIdentity(dataDir)
+	id, err := store.LoadIdentity(dataDir)
 	if err != nil {
 		return nil, err
 	}
@@ -56,7 +59,7 @@ func newApp(dataDir string, port int) (*App, error) {
 		dataDir: dataDir,
 		port:    port,
 		id:      id,
-		videos:  newVideoLib(),
+		videos:  media.NewVideoLib(),
 		peers:   newPeers(),
 		client:  &http.Client{Timeout: 30 * time.Second},
 		stream: &http.Client{Transport: &http.Transport{
@@ -82,14 +85,14 @@ func newApp(dataDir string, port int) (*App, error) {
 }
 
 func (a *App) openShare(dir string) error {
-	st, err := openStore(dir)
+	st, err := store.Open(dir)
 	if err != nil {
 		a.mu.Lock()
 		a.store, a.versions, a.shareErr = nil, nil, shareErrorText(dir, err)
 		a.mu.Unlock()
 		return err
 	}
-	vs := loadVersions(filepath.Join(st.dir, "versions.json"))
+	vs := media.LoadVersions(filepath.Join(st.Dir(), "versions.json"))
 	a.mu.Lock()
 	a.store, a.versions, a.shareErr = st, vs, ""
 	a.mu.Unlock()
@@ -129,7 +132,7 @@ func (a *App) rescan() {
 }
 
 // me 是这台电脑当前的身份，导入身份后会换成新的。
-func (a *App) me() *Identity {
+func (a *App) me() *store.Identity {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	return a.id
@@ -141,13 +144,13 @@ func (a *App) config() Config {
 	return a.cfg
 }
 
-func (a *App) getStore() *Store {
+func (a *App) getStore() *store.Store {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	return a.store
 }
 
-func (a *App) getVersions() *Versions {
+func (a *App) getVersions() *media.Versions {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	return a.versions
@@ -158,7 +161,7 @@ func (a *App) saveConfig(c Config) error {
 	a.cfg = c
 	a.mu.Unlock()
 	data, _ := json.MarshalIndent(c, "", "  ")
-	err := writeFileAtomic(filepath.Join(a.dataDir, "config.json"), data)
+	err := store.WriteFileAtomic(filepath.Join(a.dataDir, "config.json"), data)
 	a.changed()
 	return err
 }
@@ -187,7 +190,7 @@ func (a *App) setPaused(on bool) error {
 	if err := a.saveConfig(c); err != nil {
 		return err
 	}
-	setKeepAwake(!on)
+	platform.SetKeepAwake(!on)
 	if !on {
 		go a.rescan()
 	}
@@ -207,7 +210,7 @@ func (a *App) autostartArgs() []string {
 }
 
 func (a *App) setAutostart(on bool) error {
-	err := setAutostart(on, a.autostartArgs())
+	err := platform.SetAutostart(on, a.autostartArgs())
 	a.changed()
 	return err
 }
@@ -246,8 +249,8 @@ func (a *App) setup(nickname, shareDir, teamKey string) error {
 }
 
 // importIdentity 换成另一台电脑导出的身份。旧身份文件留一份备份。
-func (a *App) importIdentity(f identityFile) (*Identity, error) {
-	id, seed, err := f.parse()
+func (a *App) importIdentity(f store.IdentityFile) (*store.Identity, error) {
+	id, seed, err := f.Parse()
 	if err != nil {
 		return nil, err
 	}
@@ -258,7 +261,7 @@ func (a *App) importIdentity(f identityFile) (*Identity, error) {
 	if old, err := os.ReadFile(path); err == nil {
 		os.WriteFile(path+".bak-"+time.Now().Format("20060102-150405"), old, 0o600)
 	}
-	if err := writeIdentity(path, seed); err != nil {
+	if err := store.WriteIdentity(path, seed); err != nil {
 		return nil, err
 	}
 	a.mu.Lock()
@@ -296,20 +299,20 @@ func (a *App) renameVideo(group, name string, renameFiles bool) ([]string, error
 			if v == nil {
 				continue // 这个版本的文件已经不在了
 			}
-			target := filepath.Join(filepath.Dir(v.path), fmt.Sprintf("%s_v%02d%s", name, i+1, filepath.Ext(v.path)))
-			if target == v.path {
+			target := filepath.Join(filepath.Dir(v.Path()), fmt.Sprintf("%s_v%02d%s", name, i+1, filepath.Ext(v.Path())))
+			if target == v.Path() {
 				continue
 			}
 			// 目标已存在时只允许是同一个文件（大小写不敏感的磁盘上只改大小写）
 			if st, err := os.Stat(target); err == nil {
-				if cur, err := os.Stat(v.path); err != nil || !os.SameFile(st, cur) {
+				if cur, err := os.Stat(v.Path()); err != nil || !os.SameFile(st, cur) {
 					failed = append(failed, fmt.Sprintf("%s：同一个文件夹里已经有 %s", v.Name, filepath.Base(target)))
 					continue
 				}
 			}
-			if err := os.Rename(v.path, target); err != nil {
+			if err := os.Rename(v.Path(), target); err != nil {
 				failed = append(failed, fmt.Sprintf("%s：改名失败，文件可能正在被使用（比如同事正在播放），稍后再试", v.Name))
-				log.Printf("改名失败 %s -> %s：%v", v.path, target, err)
+				log.Printf("改名失败 %s -> %s：%v", v.Path(), target, err)
 			}
 		}
 	}

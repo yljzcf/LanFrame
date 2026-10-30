@@ -1,5 +1,17 @@
 # 编译出的安装包，用 ./build.sh 随时重新生成
 dist/
 
+# 直接运行 go build 时生成的程序文件
+/lanreview
+/lanreview.exe
+
+# go test 生成的临时文件
+*.test
+*.out
+
+# 编辑器配置
+.idea/
+.vscode/
+
 # Mac 文件夹自带的隐藏文件
 .DS_Store

@@ -16,6 +16,9 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"lanreview/internal/media"
+	"lanreview/internal/store"
 )
 
 const (
@@ -26,14 +29,14 @@ const (
 var errForbidden = errors.New("团队口令不一致")
 
 type Peer struct {
-	ID          string        `json:"id"`
-	Name        string        `json:"name"`
-	Code        string        `json:"code"`
-	Addr        string        `json:"addr"`
-	Online      bool          `json:"online"`
-	LastSeen    int64         `json:"lastSeen"`
-	KeyMismatch bool          `json:"keyMismatch"`
-	Videos      []*VideoEntry `json:"videos"`
+	ID          string              `json:"id"`
+	Name        string              `json:"name"`
+	Code        string              `json:"code"`
+	Addr        string              `json:"addr"`
+	Online      bool                `json:"online"`
+	LastSeen    int64               `json:"lastSeen"`
+	KeyMismatch bool                `json:"keyMismatch"`
+	Videos      []*media.VideoEntry `json:"videos"`
 }
 
 type Peers struct {
@@ -51,7 +54,7 @@ func (ps *Peers) seen(id, name, addr string) {
 	defer ps.mu.Unlock()
 	p := ps.byID[id]
 	if p == nil {
-		p = &Peer{ID: id, Code: deviceCode(id)}
+		p = &Peer{ID: id, Code: store.DeviceCode(id)}
 		ps.byID[id] = p
 		log.Printf("发现 %s（%s）", name, addr)
 	}
@@ -319,7 +322,7 @@ func (a *App) syncPeer(p Peer) {
 		return
 	}
 	a.peers.seen(info.ID, info.Name, p.Addr)
-	var videos []*VideoEntry
+	var videos []*media.VideoEntry
 	err = a.getJSON(ctx, "http://"+p.Addr+"/peer/videos", &videos)
 	a.peers.update(p.ID, func(p *Peer) {
 		p.KeyMismatch = errors.Is(err, errForbidden)
@@ -336,17 +339,17 @@ func (a *App) syncPeer(p Peer) {
 	if st == nil {
 		return
 	}
-	var stubs []RecordStub
+	var stubs []store.RecordStub
 	if a.getJSON(ctx, "http://"+p.Addr+"/peer/records", &stubs) != nil {
 		return
 	}
 	// 先拿删除记录，被删的批注就不用再下载了
 	sort.SliceStable(stubs, func(i, j int) bool { return stubs[i].Type == "delete" && stubs[j].Type != "delete" })
 	for _, s := range stubs {
-		if !reRecordID.MatchString(s.ID) || st.Has(s.ID) || (s.Type != "delete" && st.IsDeleted(s.Ann)) {
+		if !store.ValidRecordID(s.ID) || st.Has(s.ID) || (s.Type != "delete" && st.IsDeleted(s.Ann)) {
 			continue
 		}
-		var r Record
+		var r store.Record
 		if err := a.getJSON(ctx, "http://"+p.Addr+"/peer/record/"+s.ID, &r); err != nil {
 			continue
 		}
@@ -366,7 +369,7 @@ func (a *App) syncPeer(p Peer) {
 		if hex.EncodeToString(sum[:]) != strings.SplitN(name, ".", 2)[0] {
 			continue
 		}
-		writeFileAtomic(st.ImagePath(name), data)
+		store.WriteFileAtomic(st.ImagePath(name), data)
 	}
 }
 

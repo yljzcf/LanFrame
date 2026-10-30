@@ -1,4 +1,4 @@
-package main
+package store
 
 import (
 	"crypto/ed25519"
@@ -21,7 +21,7 @@ type Identity struct {
 	priv ed25519.PrivateKey
 }
 
-func loadIdentity(dir string) (*Identity, error) {
+func LoadIdentity(dir string) (*Identity, error) {
 	path := filepath.Join(dir, "identity.key")
 	var seed []byte
 	data, err := os.ReadFile(path)
@@ -31,7 +31,7 @@ func loadIdentity(dir string) (*Identity, error) {
 		if _, err := rand.Read(seed); err != nil {
 			return nil, err
 		}
-		if err := writeIdentity(path, seed); err != nil {
+		if err := WriteIdentity(path, seed); err != nil {
 			return nil, err
 		}
 	case err != nil:
@@ -51,22 +51,22 @@ func identityFromSeed(seed []byte) *Identity {
 	return &Identity{ID: base64.RawURLEncoding.EncodeToString(pub), priv: priv}
 }
 
-func writeIdentity(path string, seed []byte) error {
+func WriteIdentity(path string, seed []byte) error {
 	return os.WriteFile(path, []byte(hex.EncodeToString(seed)), 0o600)
 }
 
-// identityFile 是导出给用户保存的身份文件，换电脑时导入。
-type identityFile struct {
+// IdentityFile 是导出给用户保存的身份文件，换电脑时导入。
+type IdentityFile struct {
 	App      string `json:"app"`
 	Seed     string `json:"seed"`
 	Nickname string `json:"nickname,omitempty"`
 }
 
-func (i *Identity) export(nickname string) identityFile {
-	return identityFile{App: appName, Seed: hex.EncodeToString(i.priv.Seed()), Nickname: nickname}
+func (i *Identity) Export(nickname string) IdentityFile {
+	return IdentityFile{App: appName, Seed: hex.EncodeToString(i.priv.Seed()), Nickname: nickname}
 }
 
-func (f identityFile) parse() (*Identity, []byte, error) {
+func (f IdentityFile) Parse() (*Identity, []byte, error) {
 	seed, err := hex.DecodeString(f.Seed)
 	if f.App != appName || err != nil || len(seed) != ed25519.SeedSize {
 		return nil, nil, fmt.Errorf("不是有效的身份文件")
@@ -74,20 +74,20 @@ func (f identityFile) parse() (*Identity, []byte, error) {
 	return identityFromSeed(seed), seed, nil
 }
 
-// deviceCode 是给人看的短设备码，例如 3F9A-C21B。
-func deviceCode(id string) string {
+// DeviceCode 是给人看的短设备码，例如 3F9A-C21B。
+func DeviceCode(id string) string {
 	sum := sha256.Sum256([]byte(id))
 	h := strings.ToUpper(hex.EncodeToString(sum[:4]))
 	return h[:4] + "-" + h[4:]
 }
 
-// authorTag 嵌在批注 ID 的前半段，用来在没有原始记录时也能判断"是不是作者本人"。
-func authorTag(id string) string {
+// AuthorTag 嵌在批注 ID 的前半段，用来在没有原始记录时也能判断"是不是作者本人"。
+func AuthorTag(id string) string {
 	sum := sha256.Sum256([]byte(id))
 	return hex.EncodeToString(sum[:8])
 }
 
-func randomHex(n int) string {
+func RandomHex(n int) string {
 	b := make([]byte, n)
 	rand.Read(b)
 	return hex.EncodeToString(b)
@@ -99,7 +99,7 @@ func signedBytes(r *Record) ([]byte, error) {
 	return json.Marshal(&c)
 }
 
-func (i *Identity) sign(r *Record) error {
+func (i *Identity) Sign(r *Record) error {
 	b, err := signedBytes(r)
 	if err != nil {
 		return err

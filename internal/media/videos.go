@@ -1,4 +1,4 @@
-package main
+package media
 
 import (
 	"crypto/sha256"
@@ -15,6 +15,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"lanreview/internal/store"
 )
 
 type VideoInfo struct {
@@ -43,7 +45,7 @@ type VideoLib struct {
 	pending map[string]string // 还没确认写完的文件：路径 -> 上次看到的大小+修改时间
 }
 
-func newVideoLib() *VideoLib {
+func NewVideoLib() *VideoLib {
 	return &VideoLib{byFP: map[string]*VideoInfo{}, cache: map[string]*VideoInfo{}, pending: map[string]string{}}
 }
 
@@ -79,7 +81,7 @@ func (l *VideoLib) Scan(root string) {
 		}
 		name := d.Name()
 		if d.IsDir() {
-			if path != root && (name == syncDirName || strings.HasPrefix(name, ".")) {
+			if path != root && (name == store.SyncDirName || strings.HasPrefix(name, ".")) {
 				return filepath.SkipDir
 			}
 			return nil

@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>局域网审片</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header id="topbar">
+  <div class="brand">局域网审片</div>
+  <div id="me"></div>
+  <div class="spacer"></div>
+  <button id="btn-add-peer">添加电脑</button>
+  <button id="btn-help">使用说明</button>
+  <button id="btn-settings">设置</button>
+</header>
+<div id="share-error" hidden>
+  <span id="share-error-text"></span>
+  <span class="row"><button id="btn-share-retry" class="primary">重试</button><button id="btn-share-change">更换共享文件夹</button></span>
+</div>
+<div id="paused-bar" hidden>
+  <span>服务已暂停：同事看不到你的视频，你也看不到同事的视频和新批注。</span>
+  <button id="btn-resume" class="primary">恢复服务</button>
+</div>
+
+<main id="main">
+  <aside id="sidebar">
+    <div id="video-list"></div>
+  </aside>
+
+  <section id="stage">
+    <div id="empty-hint">从左边选一个视频开始审片</div>
+    <div id="player" hidden>
+      <!-- 只在需要分享者确认"是不是新版本"时出现 -->
+      <div id="version-bar" hidden></div>
+      <div id="video-area">
+        <div id="video-wrap">
+          <video id="video" preload="auto" playsinline></video>
+          <canvas id="overlay"></canvas>
+          <div id="video-msg" hidden></div>
+        </div>
+      </div>
+      <div id="timeline"><div id="tl-progress"></div><div id="tl-markers"></div></div>
+      <!-- 一行：左边视频名称（改名、调整版本），中间时间码，右边播放和批注 -->
+      <div id="controls">
+        <div class="ctl-left">
+          <div id="video-title"></div>
+          <div id="video-sub" class="ctl-info"></div>
+        </div>
+        <div class="ctl-mid">
+          <span id="tc">00:00:00:00</span>
+          <span class="ctl-info"><span id="frame-no"></span> <span id="video-meta"></span></span>
+        </div>
+        <div class="ctl-right">
+          <button id="btn-play" title="播放 / 暂停（空格）；← → 逐帧，按住 Shift 一次 10 帧">播放</button>
+          <button id="btn-annotate" class="primary" title="快捷键 C">批注这一帧</button>
+        </div>
+      </div>
+      <div id="editor" hidden>
+        <div class="tools">
+          <span class="label">画笔</span>
+          <button data-tool="pen" class="tool active">自由画</button>
+          <button data-tool="arrow" class="tool">箭头</button>
+          <button data-tool="rect" class="tool">方框</button>
+          <button data-tool="text" class="tool">文字</button>
+          <span class="colors">
+            <button data-color="#ff3b30" class="color active" style="--c:#ff3b30"></button>
+            <button data-color="#ffcc00" class="color" style="--c:#ffcc00"></button>
+            <button data-color="#34c759" class="color" style="--c:#34c759"></button>
+            <button data-color="#0a84ff" class="color" style="--c:#0a84ff"></button>
+            <button data-color="#ffffff" class="color" style="--c:#ffffff"></button>
+          </span>
+          <button id="ed-undo">撤销一笔</button>
+          <span id="ed-frame" class="muted"></span>
+        </div>
+        <textarea id="ed-text" placeholder="写下批注（可以直接粘贴图片）"></textarea>
+        <div class="attach-row">
+          <label class="btn">添加图片<input type="file" id="ed-file" accept="image/*" multiple hidden></label>
+          <div id="ed-attachments"></div>
+        </div>
+        <div class="ed-actions">
+          <span id="ed-error" class="error"></span>
+          <button id="ed-cancel">取消</button>
+          <button id="ed-save" class="primary">发布批注</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <aside id="comments">
+    <div class="comments-head">
+      <span>批注</span>
+      <select id="sort-anns" title="批注排序">
+        <option value="tc">按时间码</option>
+        <option value="new">按批注时间（最新在前）</option>
+        <option value="old">按批注时间（最早在前）</option>
+      </select>
+    </div>
+    <div id="comment-list"><div class="muted pad">还没有选视频</div></div>
+  </aside>
+</main>
+
+<div id="modal" hidden><div class="modal-box" id="modal-box"></div></div>
+<div id="toast" hidden></div>
+<script src="/static/app.js"></script>
+</body>
+</html>

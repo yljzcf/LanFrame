@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>加入局域网审片</title>
+<link rel="stylesheet" href="/static/style.css">
+<style>
+  body { display: block; }
+  .guide { max-width: 640px; margin: 0 auto; padding: 32px 16px; }
+  .guide h1 { font-size: 22px; margin: 0 0 8px; }
+  .guide h2 { font-size: 16px; margin: 24px 0 8px; }
+  .guide li { margin-bottom: 6px; }
+  .files a { display: inline-block; margin: 4px 8px 4px 0; padding: 6px 14px; background: var(--accent); color: #fff; border-radius: 6px; text-decoration: none; }
+</style>
+</head>
+<body>
+<div class="guide">
+  <h1>加入局域网审片</h1>
+  <p class="muted">这是{{if .Name}} {{.Name}} {{end}}的电脑。大家的视频都留在各自电脑上，通过局域网直接播放原片、写批注，不需要外网。</p>
+
+  <h2>1. 下载程序</h2>
+  {{if .Files}}
+  <div class="files">{{range .Files}}<a href="/download/{{.}}">{{.}}</a>{{end}}</div>
+  <p class="muted">Windows 选 .exe；Mac 选 mac.zip（Apple 芯片和 Intel 芯片通用），下载后双击解压，得到"局域网审片"，可以拖进"应用程序"文件夹。</p>
+  {{else}}
+  <p class="muted">这台电脑上没有放安装包，请找{{if .Name}} {{.Name}} {{end}}要一份。</p>
+  {{end}}
+
+  <h2>2. 双击运行</h2>
+  <ul>
+    <li><b>Windows</b>：如果弹出"Windows 已保护你的电脑"，点"更多信息"→"仍要运行"。防火墙询问时选"允许"。</li>
+    <li><b>Mac</b>：如果提示"无法验证开发者"，打开"系统设置"→"隐私与安全性"，在下方点"仍要打开"。询问"查找本地网络上的设备"时选"允许"。</li>
+  </ul>
+
+  <h2>3. 按网页引导完成设置</h2>
+  <p>程序没有窗口，会自动打开浏览器，起一个昵称、选一个共享文件夹就能开始。分享视频期间请保持程序运行。程序在托盘里有图标（Mac 在屏幕顶部菜单栏，Windows 在右下角），可以从那里打开界面、设置开机启动或退出。</p>
+  <p class="muted">如果你是点同事发来的分享链接来到这里的：装好并打开程序后，再点一次那个链接就能直接跳过去。</p>
+</div>
+</body>
+</html>

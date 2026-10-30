@@ -7,10 +7,12 @@ import (
 	"image/color"
 	"image/png"
 	"math"
+	"sync"
 )
 
 // 托盘图标和程序图标都在代码里画出来：一个对话气泡，运行时里面是播放三角，暂停服务时是两条竖线。
-// 托盘在 Mac 上用黑色模板图（系统按深浅色菜单栏自动着色），Windows 用彩色图包成 ICO。
+// 托盘在 Mac 上用黑色模板图（系统按深浅色菜单栏自动着色）；Windows 的任务栏可能是深色也可能是浅色，
+// 所以和程序图标一样画在蓝底（暂停时灰底）圆角方块上，包成 ICO。
 // 程序图标由 tools/appicon 在打包时生成，网页的 favicon 也用它。
 
 type shapeFunc func(x, y float64) bool // 坐标是 0~1
@@ -181,38 +183,63 @@ func TrayTemplateIcon(paused bool) []byte {
 	return render(36, []layer{{logo(paused), color.NRGBA{0, 0, 0, 255}}})
 }
 
+// badge 是圆角方块底色上一个白色的对话气泡，里面是播放三角（暂停时是两条竖线）。
+// m 是方块四周的留白，r 是方块的圆角，pad 是气泡和方块边缘的距离，都按图标边长的比例算。
+func badge(bg color.NRGBA, paused bool, m, r, pad float64) []layer {
+	return []layer{
+		{roundRect(m, m, 1-m, 1-m, r), bg},
+		{within(logo(paused), m+pad, m+pad, 1-m-pad, 1-m-pad), white},
+	}
+}
+
 // AppIcon 是程序图标：蓝底圆角方块里一个白色的对话气泡和播放三角，和托盘图标是同一套图形。
 // mac 为真时按 Apple 的图标网格四周留白（主体占 824/1024），否则只留很窄的边，给 Windows 和网页用。
 func AppIcon(size int, mac bool) []byte {
-	m, r, pad := 0.04, 0.2, 0.08
 	if mac {
-		m, r, pad = 0.1, 0.18, 0.1
+		return render(size, badge(blue, false, 0.1, 0.18, 0.1))
 	}
-	return render(size, []layer{
-		{roundRect(m, m, 1-m, 1-m, r), blue},
-		{within(logo(false), m+pad, m+pad, 1-m-pad, 1-m-pad), white},
-	})
+	return render(size, badge(blue, false, 0.04, 0.2, 0.08))
 }
 
-// TrayWindowsIcon 是 Windows 通知区域用的彩色图标（ICO 格式，里面包一张 PNG）。
-func TrayWindowsIcon(paused bool) []byte {
+// windowsTraySizes 是 Windows 托盘图标里放的几种尺寸：通知区域在 100%～200% 缩放下显示 16～32 像素，
+// 而托盘库（systray）按"大图标"的尺寸加载（没声明支持高分屏的程序固定是 32），系统再缩小显示。
+var windowsTraySizes = []int{16, 20, 24, 32, 40, 48, 64}
+
+// trayWindowsIcons 缓存运行和暂停两种图标，每张都要画七个尺寸，不用每次刷新托盘都重画。
+var trayWindowsIcons = map[bool]func() []byte{
+	false: sync.OnceValue(func() []byte { return trayWindowsICO(false) }),
+	true:  sync.OnceValue(func() []byte { return trayWindowsICO(true) }),
+}
+
+// TrayWindowsIcon 是 Windows 通知区域用的图标（ICO 格式）：和程序图标一样的蓝底白色对话气泡，
+// 暂停服务时底色变灰、三角换成两条竖线。托盘图标很小，气泡比程序图标留的边更少，尽量画大。
+func TrayWindowsIcon(paused bool) []byte { return trayWindowsIcons[paused]() }
+
+func trayWindowsICO(paused bool) []byte {
 	bg := blue
 	if paused {
 		bg = color.NRGBA{0x8b, 0x8f, 0x98, 255}
 	}
-	pngData := render(32, []layer{
-		{roundRect(0.04, 0.04, 0.96, 0.96, 0.2), bg},
-		{glyph(paused), white},
-	})
-	return pngToICO(pngData, 32)
+	pngs := make([][]byte, len(windowsTraySizes))
+	for i, size := range windowsTraySizes {
+		pngs[i] = render(size, badge(bg, paused, 0.02, 0.2, 0.05))
+	}
+	return pngsToICO(windowsTraySizes, pngs)
 }
 
-func pngToICO(pngData []byte, size int) []byte {
+// pngsToICO 把几张不同尺寸的 PNG 包成一个 ICO 文件，Windows 加载时挑最合适的一张。
+func pngsToICO(sizes []int, pngs [][]byte) []byte {
 	var buf bytes.Buffer
-	binary.Write(&buf, binary.LittleEndian, [3]uint16{0, 1, 1}) // 保留、类型=图标、数量
-	buf.Write([]byte{byte(size), byte(size), 0, 0})
-	binary.Write(&buf, binary.LittleEndian, [2]uint16{1, 32}) // 色彩平面、位深
-	binary.Write(&buf, binary.LittleEndian, [2]uint32{uint32(len(pngData)), 22})
-	buf.Write(pngData)
+	binary.Write(&buf, binary.LittleEndian, [3]uint16{0, 1, uint16(len(pngs))}) // 保留、类型=图标、数量
+	offset := 6 + 16*len(pngs)                                                  // 文件头 6 字节，每张图的目录项 16 字节
+	for i, data := range pngs {
+		buf.Write([]byte{byte(sizes[i]), byte(sizes[i]), 0, 0})   // 宽、高（256 记成 0）、调色板、保留
+		binary.Write(&buf, binary.LittleEndian, [2]uint16{1, 32}) // 色彩平面、位深
+		binary.Write(&buf, binary.LittleEndian, [2]uint32{uint32(len(data)), uint32(offset)})
+		offset += len(data)
+	}
+	for _, data := range pngs {
+		buf.Write(data)
+	}
 	return buf.Bytes()
 }

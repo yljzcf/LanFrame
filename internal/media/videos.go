@@ -36,13 +36,14 @@ type VideoInfo struct {
 }
 
 type VideoLib struct {
-	mu    sync.Mutex
-	list  []*VideoInfo
-	byFP  map[string]*VideoInfo
-	cache map[string]*VideoInfo // 路径+大小+修改时间 -> 已算好的信息，避免重复算指纹
+	mu   sync.Mutex
+	list []*VideoInfo
+	byFP map[string]*VideoInfo
 
+	// 下面两个只在扫描时用，由 scanMu 保护
 	scanMu  sync.Mutex
-	pending map[string]string // 还没确认写完的文件：路径 -> 上次看到的大小+修改时间
+	cache   map[string]*VideoInfo // 路径+大小+修改时间 -> 已算好的信息，避免重复算指纹；只留最近一次扫描到的
+	pending map[string]string     // 还没确认写完的文件：路径 -> 上次看到的大小+修改时间
 }
 
 func NewVideoLib() *VideoLib {
@@ -74,6 +75,7 @@ func (l *VideoLib) Scan(root string) {
 	defer l.scanMu.Unlock()
 	var list []*VideoInfo
 	seen := map[string]bool{}
+	nextCache := map[string]*VideoInfo{}
 	nextPending := map[string]string{}
 	filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -94,9 +96,7 @@ func (l *VideoLib) Scan(root string) {
 			return nil
 		}
 		key := fmt.Sprintf("%s|%d|%d", path, info.Size(), info.ModTime().UnixNano())
-		l.mu.Lock()
 		v := l.cache[key]
-		l.mu.Unlock()
 		if v == nil {
 			if !l.settled(path, info, nextPending) {
 				return nil
@@ -115,10 +115,8 @@ func (l *VideoLib) Scan(root string) {
 			} else {
 				log.Printf("读取视频信息失败 %s：%v", path, err)
 			}
-			l.mu.Lock()
-			l.cache[key] = v
-			l.mu.Unlock()
 		}
+		nextCache[key] = v
 		// 内容完全相同的两个文件只列一个
 		if !seen[v.FP] {
 			seen[v.FP] = true
@@ -126,7 +124,7 @@ func (l *VideoLib) Scan(root string) {
 		}
 		return nil
 	})
-	l.pending = nextPending
+	l.cache, l.pending = nextCache, nextPending
 	sort.Slice(list, func(i, j int) bool {
 		if list[i].Name != list[j].Name {
 			return list[i].Name < list[j].Name

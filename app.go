@@ -45,8 +45,7 @@ type App struct {
 	cfg      Config
 	store    *store.Store
 	versions *media.Versions
-	onChange func() // 设置变了时通知托盘刷新
-	trayOn   bool
+	onChange func() // 设置变了时通知托盘刷新，有托盘时才有
 	shareErr string // 共享文件夹打不开的原因
 }
 
@@ -168,7 +167,7 @@ func (a *App) saveConfig(c Config) error {
 
 func (a *App) setOnChange(f func()) {
 	a.mu.Lock()
-	a.onChange, a.trayOn = f, true
+	a.onChange = f
 	a.mu.Unlock()
 }
 
@@ -218,7 +217,7 @@ func (a *App) setAutostart(on bool) error {
 // quit 退出程序：有托盘时让托盘收尾，否则直接退出。
 func (a *App) quit() {
 	a.mu.Lock()
-	tray := a.trayOn
+	tray := a.onChange != nil
 	a.mu.Unlock()
 	if tray {
 		systray.Quit()
@@ -341,7 +340,8 @@ func (a *App) start() {
 				continue
 			}
 			a.rescan()
-			if st := a.getStore(); st != nil {
+			// 清理被删批注的图片要把图片文件夹整个读一遍，一分钟一次就够了
+			if st := a.getStore(); st != nil && i%12 == 0 {
 				st.GC()
 			}
 		}

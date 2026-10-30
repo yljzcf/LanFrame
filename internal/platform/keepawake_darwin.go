@@ -13,7 +13,7 @@ var (
 	caffeinate *exec.Cmd
 )
 
-// setKeepAwake 运行服务期间阻止 Mac 空闲睡眠（合上笔记本盖子仍会睡眠），暂停服务时取消。
+// SetKeepAwake 运行服务期间阻止 Mac 空闲睡眠（合上笔记本盖子仍会睡眠），暂停服务时取消。
 func SetKeepAwake(on bool) {
 	awakeMu.Lock()
 	defer awakeMu.Unlock()

@@ -23,5 +23,5 @@ func init() {
 	}()
 }
 
-// setKeepAwake 运行服务期间阻止 Windows 空闲睡眠，暂停服务时取消。
+// SetKeepAwake 运行服务期间阻止 Windows 空闲睡眠，暂停服务时取消。
 func SetKeepAwake(on bool) { awakeCh <- on }

@@ -53,7 +53,7 @@ type VideoRef struct {
 // 删除批注也是新增一条 delete 记录。
 type Record struct {
 	ID         string    `json:"id"`
-	Type       string    `json:"type"` // create | edit | delete（旧版本还有 resolve、reopen，现在不再使用）
+	Type       string    `json:"type"` // create | edit | delete
 	Ann        string    `json:"ann"`  // 批注 ID，等于 create 记录的 ID
 	Clock      int64     `json:"clock"`
 	Time       int64     `json:"time"`
@@ -178,8 +178,6 @@ func validateRecord(r *Record) error {
 		if r.Type == "edit" && r.Content == nil {
 			return errors.New("edit 记录没有内容")
 		}
-	case "resolve", "reopen":
-		// 旧版本"完成"功能留下的记录：照常接收保存，免得和旧版本同步时反复报错，但不再使用
 	default:
 		return errors.New("未知的记录类型")
 	}

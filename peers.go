@@ -24,6 +24,9 @@ import (
 const (
 	mcastAddr     = "239.255.53.81:28381"
 	onlineTimeout = 12 * time.Second
+	// 校验不通过的记录（比如更新的版本才有的记录类型）隔这么久才再从同一台电脑下载一次，
+	// 免得每轮同步都下载、拒绝、写一行日志
+	rejectRetry = 10 * time.Minute
 )
 
 var errForbidden = errors.New("团队口令不一致")
@@ -40,13 +43,14 @@ type Peer struct {
 }
 
 type Peers struct {
-	mu      sync.Mutex
-	byID    map[string]*Peer
-	syncing map[string]bool
+	mu       sync.Mutex
+	byID     map[string]*Peer
+	syncing  map[string]bool
+	rejected map[string]time.Time // "电脑 ID/记录 ID" -> 拒绝的时间。按电脑分开记，一台电脑上的副本坏了，还能从别的电脑拿到好的
 }
 
 func newPeers() *Peers {
-	return &Peers{byID: map[string]*Peer{}, syncing: map[string]bool{}}
+	return &Peers{byID: map[string]*Peer{}, syncing: map[string]bool{}, rejected: map[string]time.Time{}}
 }
 
 func (ps *Peers) seen(id, name, addr string) {
@@ -86,6 +90,30 @@ func (ps *Peers) Snapshot() []Peer {
 		return out[i].Name < out[j].Name
 	})
 	return out
+}
+
+func (ps *Peers) anyOnline() bool {
+	ps.mu.Lock()
+	defer ps.mu.Unlock()
+	for _, p := range ps.byID {
+		if time.Since(time.UnixMilli(p.LastSeen)) < onlineTimeout {
+			return true
+		}
+	}
+	return false
+}
+
+func (ps *Peers) reject(peer, rec string) {
+	ps.mu.Lock()
+	defer ps.mu.Unlock()
+	ps.rejected[peer+"/"+rec] = time.Now()
+}
+
+func (ps *Peers) rejectedRecently(peer, rec string) bool {
+	ps.mu.Lock()
+	defer ps.mu.Unlock()
+	t, ok := ps.rejected[peer+"/"+rec]
+	return ok && time.Since(t) < rejectRetry
 }
 
 func (ps *Peers) knownAddr(addr string) bool {
@@ -252,11 +280,12 @@ func (a *App) manualLoop() {
 	}
 }
 
-// subnetScanLoop 是组播被屏蔽时的兜底：一台都没找到时，挨个询问本网段的地址。
+// subnetScanLoop 是组播被屏蔽时的兜底：一台在线的都没有时，挨个询问本网段的地址。
+// 见过但已经离线的不算，对方换了 IP 也能重新找到。
 func (a *App) subnetScanLoop() {
 	time.Sleep(10 * time.Second)
 	for {
-		if c := a.config(); len(a.peers.Snapshot()) == 0 && c.Nickname != "" && !c.Paused {
+		if c := a.config(); !a.peers.anyOnline() && c.Nickname != "" && !c.Paused {
 			a.scanSubnets()
 		}
 		time.Sleep(2 * time.Minute)
@@ -346,7 +375,7 @@ func (a *App) syncPeer(p Peer) {
 	// 先拿删除记录，被删的批注就不用再下载了
 	sort.SliceStable(stubs, func(i, j int) bool { return stubs[i].Type == "delete" && stubs[j].Type != "delete" })
 	for _, s := range stubs {
-		if !store.ValidRecordID(s.ID) || st.Has(s.ID) || (s.Type != "delete" && st.IsDeleted(s.Ann)) {
+		if !store.ValidRecordID(s.ID) || st.Has(s.ID) || (s.Type != "delete" && st.IsDeleted(s.Ann)) || a.peers.rejectedRecently(p.ID, s.ID) {
 			continue
 		}
 		var r store.Record
@@ -354,9 +383,11 @@ func (a *App) syncPeer(p Peer) {
 			continue
 		}
 		if r.ID != s.ID {
+			a.peers.reject(p.ID, s.ID)
 			continue
 		}
 		if _, err := st.Add(&r); err != nil {
+			a.peers.reject(p.ID, s.ID)
 			log.Printf("拒绝来自 %s 的记录 %s：%v", p.Name, s.ID, err)
 		}
 	}

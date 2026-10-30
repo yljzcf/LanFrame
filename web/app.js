@@ -93,8 +93,10 @@ function groupVersions(list) {
   return out.sort((a, b) => videoName(a[0]).localeCompare(videoName(b[0]), 'zh'));
 }
 
+// 文件名去掉扩展名和末尾的版本号，比如 LAX43_EP03_v02.mp4 → LAX43_EP03
+const baseName = (name) => name.replace(/\.[^.]+$/, '').replace(/[\s_\-.]*v\d+$/i, '');
 // 视频名称：分享者起过名就用名称，否则用文件名去掉扩展名和末尾的版本号
-const videoName = (v) => v.title || v.name.replace(/\.[^.]+$/, '').replace(/[\s_\-.]*v\d+$/i, '') || v.name;
+const videoName = (v) => v.title || baseName(v.name) || v.name;
 const verLabel = (n) => `v${pad2(n)}`;
 // 带版本号的名称，比如 LAX43_EP03_v02，列表和标题都用它。
 // 起过名的用"名称_v版本号"；没起名的，文件名里已经带版本号就照用，没带才补上
@@ -268,7 +270,7 @@ function openRename() {
   const members = (S.mine || []).filter((v) => v.group === cur.group).sort((a, b) => a.version - b.version);
   const latest = members[members.length - 1] || cur;
   // 默认值：已有名称，否则用最新版本的文件名去掉扩展名和末尾的版本号
-  const initial = cur.title || latest.name.replace(/\.[^.]+$/, '').replace(/[\s_\-.]*v\d+$/i, '');
+  const initial = cur.title || baseName(latest.name);
   openModal('rename', `
     <h2>修改视频名称</h2>
     <div class="field"><label>视频名称（同事看到的名字），例如 LAX43_EP03</label>
@@ -619,25 +621,26 @@ $('#ed-undo').onclick = () => { editor?.strokes.pop(); drawOverlay(); };
 $('#ed-cancel').onclick = closeEditor;
 
 async function uploadImage(blob) {
-  const r = await fetch('/api/images', { method: 'POST', body: blob });
-  const t = await r.text();
-  if (!r.ok) throw new Error(t.trim());
-  return JSON.parse(t).name;
+  return (await api('/api/images', { method: 'POST', body: blob })).name;
 }
 
-async function addAttachments(files) {
+// 逐张上传图片，传好一张交给 add；add 返回 false 表示已经用不上了（比如编辑框关了），后面的不再上传
+async function uploadImages(files, add, fail) {
   for (const f of files) {
     if (!f.type.startsWith('image/')) continue;
     try {
-      const name = await uploadImage(f);
-      if (!editor) return;
-      editor.attachments.push(name);
-      renderAttachments();
+      if (add(await uploadImage(f)) === false) return;
     } catch (e) {
-      $('#ed-error').textContent = e.message;
+      fail(e.message);
     }
   }
 }
+
+const addAttachments = (files) => uploadImages(files, (name) => {
+  if (!editor) return false;
+  editor.attachments.push(name);
+  renderAttachments();
+}, (msg) => { $('#ed-error').textContent = msg; });
 $('#ed-file').onchange = (e) => { addAttachments([...e.target.files]); e.target.value = ''; };
 $('#ed-text').addEventListener('paste', (e) => {
   const files = [...(e.clipboardData?.files || [])];
@@ -974,19 +977,11 @@ async function sendReply() {
   }
 }
 
-async function addReplyImages(files) {
-  for (const f of files) {
-    if (!f.type.startsWith('image/')) continue;
-    try {
-      const name = await uploadImage(f);
-      if (!replyDraft) return;
-      replyDraft.atts.push(name);
-      renderComments();
-    } catch (err) {
-      $('#rb-err').textContent = err.message;
-    }
-  }
-}
+const addReplyImages = (files) => uploadImages(files, (name) => {
+  if (!replyDraft) return false;
+  replyDraft.atts.push(name);
+  renderComments();
+}, (msg) => { $('#rb-err').textContent = msg; });
 
 $('#comment-list').addEventListener('input', (e) => {
   if (replyDraft && e.target.matches('.reply-box textarea')) replyDraft.text = e.target.value;
@@ -1269,7 +1264,7 @@ function openSetup(first) {
     <div class="field"><label>3. 团队口令（可选）：设置后，只有填了相同口令的电脑能看到你的视频和批注。团队里每个人都要填一样的；不填就是局域网里谁都能看。</label>
       <input type="text" id="su-key" maxlength="64" placeholder="不填则不设口令" value="${esc(S?.teamKey || '')}"></div>
     <div class="section">
-      <div class="row"><span class="muted">你的设备码：<b id="su-code">${esc(S?.me?.code || '')}</b></span>
+      <div class="row"><span class="muted">你的设备码：<b id="su-code">${esc(S?.me?.code || '')}</b>${S?.version ? ` · 程序版本 ${esc(S.version)}` : ''}</span>
         <span class="spacer"></span>
         ${first ? '' : '<a class="btn" href="/api/identity" download>导出身份文件</a>'}
         <label class="btn">${first ? '在别的电脑用过？导入身份文件' : '导入身份文件'}<input type="file" id="su-import" accept=".json,application/json" hidden></label></div>

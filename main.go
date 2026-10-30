@@ -2,6 +2,7 @@ package main
 
 import (
 	"embed"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -22,6 +23,9 @@ var webFS embed.FS
 
 const appName = "lan-video-review"
 
+// version 是程序的版本号，打包时由 build.sh 用 -ldflags "-X main.version=..." 写进来。
+var version = "dev"
+
 func main() {
 	// 端口不能放在 49152 以上：Mac 和 Windows 会从那一段随机挑端口给对外连接用，随时可能被占
 	port := flag.Int("port", 28380, "HTTP 端口")
@@ -32,7 +36,8 @@ func main() {
 	autostart := flag.Bool("autostart", false, "内部使用：开机启动时由系统带上")
 	flag.Parse()
 
-	if *dataDir == "" {
+	defaultData := *dataDir == ""
+	if defaultData {
 		base, err := os.UserConfigDir()
 		if err != nil {
 			log.Fatal(err)
@@ -75,8 +80,10 @@ func main() {
 	if err != nil {
 		fatal("局域网审片无法启动。", err)
 	}
-	// 开机启动项里记着程序路径，程序被挪过位置的话这里顺便更新
-	if platform.AutostartEnabled() {
+	// 开机启动项里记着程序路径，程序被挪过位置的话这里顺便更新。
+	// 只在双击打开（用默认配置目录）时更新：用 -data 另开的开发测试实例不能把启动项改成指向自己；
+	// 开机启动本身带着 -data，路径一定是对的，也不用更新
+	if defaultData && platform.AutostartEnabled() {
 		if err := platform.SetAutostart(true, app.autostartArgs()); err != nil {
 			log.Printf("更新开机启动项失败：%v", err)
 		}
@@ -85,7 +92,7 @@ func main() {
 	platform.SetKeepAwake(!app.paused())
 	go func() { log.Fatal(http.Serve(ln, app.routes())) }()
 
-	log.Printf("已启动：%s（开机启动：%v，服务暂停：%v）", url, *autostart, app.paused())
+	log.Printf("已启动 %s：%s（开机启动：%v，服务暂停：%v）", version, url, *autostart, app.paused())
 	switch {
 	case *autostart && app.config().SilentStart:
 		log.Printf("开机后静默运行，不打开浏览器")
@@ -119,14 +126,16 @@ func setupLog(dir string) {
 	log.SetOutput(io.MultiWriter(f, os.Stderr))
 }
 
+// alreadyRunning 判断端口上是不是已经有一个审片程序在运行（而不是别的程序占着这个端口）。
 func alreadyRunning(port int) bool {
 	c := http.Client{Timeout: time.Second}
 	resp, err := c.Get(fmt.Sprintf("http://127.0.0.1:%d/peer/info", port))
 	if err != nil {
 		return false
 	}
-	resp.Body.Close()
-	return resp.StatusCode == http.StatusOK
+	defer resp.Body.Close()
+	var info peerInfo
+	return resp.StatusCode == http.StatusOK && json.NewDecoder(resp.Body).Decode(&info) == nil && info.App == appName
 }
 
 func openBrowser(url string) {

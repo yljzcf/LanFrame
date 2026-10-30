@@ -17,6 +17,7 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -30,12 +31,14 @@ func (a *App) routes() http.Handler {
 
 	// 给局域网里其他电脑用的接口：只开放共享文件夹里扫描到的视频和批注同步文件夹
 	// 设了团队口令时，除了 /peer/info 都要带上口令
-	mux.HandleFunc("GET /peer/info", a.peerInfo)
-	mux.HandleFunc("GET /peer/videos", a.teamOnly(a.peerVideos))
-	mux.HandleFunc("GET /peer/video/{fp}", a.teamOnly(a.peerVideo))
-	mux.HandleFunc("GET /peer/records", a.teamOnly(a.peerRecords))
-	mux.HandleFunc("GET /peer/record/{id}", a.teamOnly(a.peerRecord))
-	mux.HandleFunc("GET /peer/image/{name}", a.teamOnly(a.peerImage))
+	peer := http.NewServeMux()
+	peer.HandleFunc("GET /peer/info", a.peerInfo)
+	peer.HandleFunc("GET /peer/videos", a.teamOnly(a.peerVideos))
+	peer.HandleFunc("GET /peer/video/{fp}", a.teamOnly(a.peerVideo))
+	peer.HandleFunc("GET /peer/records", a.teamOnly(a.peerRecords))
+	peer.HandleFunc("GET /peer/record/{id}", a.teamOnly(a.peerRecord))
+	peer.HandleFunc("GET /peer/image/{name}", a.teamOnly(a.peerImage))
+	mux.Handle("/peer/", notFromBrowser(peer))
 	mux.HandleFunc("GET /download/{name}", a.download)
 
 	// 只给本机网页用的接口
@@ -50,7 +53,7 @@ func (a *App) routes() http.Handler {
 	api.HandleFunc("POST /api/annotations", a.apiCreate)
 	api.HandleFunc("POST /api/annotations/{ann}/{action}", a.apiAction)
 	api.HandleFunc("POST /api/images", a.apiUploadImage)
-	api.HandleFunc("GET /api/images/{name}", a.apiImage)
+	api.HandleFunc("GET /api/images/{name}", a.peerImage)
 	api.HandleFunc("POST /api/versions/answer", a.apiVersionAnswer)
 	api.HandleFunc("POST /api/versions/move", a.apiVersionMove)
 	api.HandleFunc("POST /api/versions/rename", a.apiVersionRename)
@@ -58,12 +61,35 @@ func (a *App) routes() http.Handler {
 	api.HandleFunc("POST /api/identity", a.apiImportIdentity)
 	api.HandleFunc("POST /api/quit", a.apiQuit)
 	api.HandleFunc("POST /api/toggle", a.apiToggle)
-	mux.Handle("/api/", localOnly(api))
+	// 只看来源地址挡不住跨站请求：用户浏览的任何网页都能让浏览器往 localhost 发 POST，
+	// 所以再拒绝其他网站发来的修改请求
+	mux.Handle("/api/", localOnly(http.NewCrossOriginProtection().Handler(api)))
 
 	web, _ := fs.Sub(webFS, "web")
 	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServerFS(web)))
+	mux.HandleFunc("GET /favicon.png", favicon)
 	mux.HandleFunc("GET /{$}", a.index)
 	return a.pausedGate(mux)
+}
+
+// notFromBrowser：/peer/ 只给其他电脑上的审片程序用。浏览器发的请求都带 Sec-Fetch-Site，程序之间的请求不带，
+// 这样恶意网页即使用 DNS 重绑定把自己的域名指向这台电脑，也读不到视频和批注。
+func notFromBrowser(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Sec-Fetch-Site") != "" {
+			http.Error(w, "只给审片程序之间使用", http.StatusForbidden)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+var faviconPNG = sync.OnceValue(func() []byte { return platform.AppIcon(64, false) })
+
+func favicon(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "image/png")
+	w.Header().Set("Cache-Control", "max-age=86400")
+	w.Write(faviconPNG())
 }
 
 // pausedGate：暂停服务时只给本机网页用，局域网里的请求一律拒绝，同事那边看到的就是离线。
@@ -285,11 +311,12 @@ func (a *App) apiState(w http.ResponseWriter, r *http.Request) {
 			"autostartSupported": platform.AutostartSupported(),
 			"silentStart":        c.SilentStart,
 		},
-		"port":  a.port,
-		"addrs": a.lanAddrs(),
-		"mine":  a.listing(),
-		"peers": peers,
-		"os":    runtime.GOOS,
+		"port":    a.port,
+		"addrs":   a.lanAddrs(),
+		"mine":    a.listing(),
+		"peers":   peers,
+		"os":      runtime.GOOS,
+		"version": version,
 	}
 	if st != nil {
 		resp["syncDir"] = st.Dir()
@@ -733,8 +760,4 @@ func (a *App) apiUploadImage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, map[string]string{"name": name})
-}
-
-func (a *App) apiImage(w http.ResponseWriter, r *http.Request) {
-	a.peerImage(w, r)
 }

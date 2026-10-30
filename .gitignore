@@ -1,6 +1,9 @@
 # 编译出的安装包，用 ./build.sh 随时重新生成
 dist/
 
+# build.sh 打包时临时生成的 Windows 图标资源
+*.syso
+
 # 直接运行 go build 时生成的程序文件
 /lanreview
 /lanreview.exe

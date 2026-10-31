@@ -31,7 +31,7 @@ func LoadIdentity(dir string) (*Identity, error) {
 		if _, err := rand.Read(seed); err != nil {
 			return nil, err
 		}
-		if err := WriteIdentity(path, seed); err != nil {
+		if err := writeIdentity(path, seed); err != nil {
 			return nil, err
 		}
 	case err != nil:
@@ -51,27 +51,8 @@ func identityFromSeed(seed []byte) *Identity {
 	return &Identity{ID: base64.RawURLEncoding.EncodeToString(pub), priv: priv}
 }
 
-func WriteIdentity(path string, seed []byte) error {
+func writeIdentity(path string, seed []byte) error {
 	return os.WriteFile(path, []byte(hex.EncodeToString(seed)), 0o600)
-}
-
-// IdentityFile 是导出给用户保存的身份文件，换电脑时导入。
-type IdentityFile struct {
-	App      string `json:"app"`
-	Seed     string `json:"seed"`
-	Nickname string `json:"nickname,omitempty"`
-}
-
-func (i *Identity) Export(nickname string) IdentityFile {
-	return IdentityFile{App: appName, Seed: hex.EncodeToString(i.priv.Seed()), Nickname: nickname}
-}
-
-func (f IdentityFile) Parse() (*Identity, []byte, error) {
-	seed, err := hex.DecodeString(f.Seed)
-	if f.App != appName || err != nil || len(seed) != ed25519.SeedSize {
-		return nil, nil, fmt.Errorf("不是有效的身份文件")
-	}
-	return identityFromSeed(seed), seed, nil
 }
 
 // DeviceCode 是给人看的短设备码，例如 3F9A-C21B。

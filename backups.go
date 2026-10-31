@@ -208,7 +208,7 @@ func (a *App) startVideoBackup(owner, fp string) error {
 	defer a.dl.mu.Unlock()
 	for _, j := range a.dl.jobs {
 		if j.FP == fp && !j.finished() {
-			return errors.New("这个视频已经在备份了，右上角\"下载\"里能看进度")
+			return errors.New("这个视频已经在备份了，左边列表底部能看进度")
 		}
 	}
 	taken := a.dl.takenPathsLocked()

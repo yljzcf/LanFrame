@@ -2,9 +2,6 @@
 // 以及共享文件夹里的三个子文件夹（见 layout.go）。
 package store
 
-// appName 写在导出的身份文件里，用来认出是不是本程序的文件。
-const appName = "lan-video-review"
-
 // ValidRecordID 判断是不是合法的记录 ID（也用于批注 ID）。
 func ValidRecordID(s string) bool { return reRecordID.MatchString(s) }
 

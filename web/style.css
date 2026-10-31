@@ -47,7 +47,13 @@ input[type=text], textarea {
 #me { color: var(--muted); }
 
 #main { flex: 1; display: flex; min-height: 0; }
-#sidebar { width: clamp(170px, 20vw, 260px); flex: none; border-right: 1px solid var(--line); overflow-y: auto; background: var(--panel); }
+#sidebar { width: clamp(170px, 20vw, 260px); flex: none; border-right: 1px solid var(--line); display: flex; flex-direction: column; background: var(--panel); }
+#video-list { flex: 1; overflow-y: auto; min-height: 0; }
+/* 侧栏底部的"下载中 N 项" */
+#dl-strip { flex: none; display: flex; align-items: center; gap: 6px; padding: 8px 12px; border-top: 1px solid var(--line); font-size: 12px; cursor: pointer; }
+#dl-strip:hover { background: var(--panel-2); }
+#dl-strip.failed { color: var(--danger); }
+#dl-strip.idle { color: var(--muted); }
 #comments { width: clamp(240px, 28vw, 380px); flex: none; border-left: 1px solid var(--line); display: flex; flex-direction: column; background: var(--panel); }
 #stage { flex: 1; display: flex; flex-direction: column; min-width: 0; padding: 12px; }
 /* 窗口太窄时改成上下排列：视频列表、播放器、批注 */
@@ -117,7 +123,11 @@ a { color: var(--accent); }
 .toggle { display: flex; gap: 8px; align-items: flex-start; margin-bottom: 8px; }
 .toggle input { margin-top: 4px; }
 .share-text { width: 100%; height: 110px; font-size: 12px; }
-#quit-screen { position: fixed; inset: 0; background: var(--bg); display: flex; align-items: center; justify-content: center; text-align: center; z-index: 100; padding: 24px; }
+/* 软件配置里每一块的小标题，和"本机信息"的几行 */
+.section-title { font-weight: 600; margin-bottom: 8px; }
+.info-row { display: flex; gap: 12px; align-items: baseline; margin-bottom: 6px; flex-wrap: wrap; }
+.info-row > .muted:first-child { width: 64px; flex: none; }
+.info-row .row { flex: 1; }
 .empty-group { padding: 4px 26px 8px; font-size: 12px; color: var(--muted); }
 
 #player { flex: 1; display: flex; flex-direction: column; min-height: 0; }

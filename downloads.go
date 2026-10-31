@@ -883,6 +883,107 @@ func hasActive(j *dlJob) bool {
 	return false
 }
 
+// trashPath 把文件或文件夹移到废纸篓（Windows 是回收站）。测试里换掉，免得往真的废纸篓里放东西。
+var trashPath = platform.Trash
+
+// deleteDownload 把一项下载拿到的东西移到废纸篓，再从列表里拿掉，省得用户去"备份"里自己找着删。
+// 文件夹里只有这项下载的文件时整个文件夹一起移走；还有别的东西（再拿一次时另存的、用户自己放的）时只移走这项下载的文件。
+// 没下完的部分直接删掉。只动"备份"里的东西；还在下的要先取消。
+func (a *App) deleteDownload(id string) error {
+	root, err := a.backupRoot()
+	if err != nil {
+		return err
+	}
+	d := a.dl
+	d.mu.Lock()
+	j := d.find(id)
+	if j == nil {
+		d.mu.Unlock()
+		return errors.New("没有这项下载")
+	}
+	if !j.finished() || hasActive(j) {
+		d.mu.Unlock()
+		return errors.New("还在下载，先取消再删除")
+	}
+	isDir, local := j.Dir, j.Local
+	var done, parts []string
+	for _, f := range j.Files {
+		if f.Done {
+			done = append(done, f.Local)
+		} else {
+			parts = append(parts, f.Local+partExt)
+		}
+	}
+	d.mu.Unlock()
+
+	for _, p := range append([]string{local}, done...) {
+		if rel, err := filepath.Rel(root, p); err != nil || rel == "." || strings.HasPrefix(rel, "..") {
+			return fmt.Errorf("%s 不在共享文件夹的\"备份\"里，不能删除", p)
+		}
+	}
+	for _, p := range parts {
+		os.Remove(p)
+	}
+	targets := done
+	if isDir && onlyFiles(local, done) {
+		targets = []string{local}
+	}
+	for _, p := range targets {
+		if !fileExists(p) {
+			continue // 已经自己删掉了
+		}
+		if err := trashPath(p); err != nil {
+			return fmt.Errorf("%s 没能移到%s：%v", filepath.Base(p), platform.TrashName, err)
+		}
+	}
+	if isDir {
+		// 只移走了一部分时，空下来的子文件夹（还有这项下载的文件夹本身）删掉
+		for _, p := range done {
+			for dir := filepath.Dir(p); dir == local || strings.HasPrefix(dir, local+string(filepath.Separator)); dir = filepath.Dir(dir) {
+				if os.Remove(dir) != nil {
+					break
+				}
+			}
+		}
+	}
+
+	d.mu.Lock()
+	for i, x := range d.jobs {
+		if x == j {
+			d.jobs = append(d.jobs[:i], d.jobs[i+1:]...)
+			break
+		}
+	}
+	d.saveLocked()
+	d.mu.Unlock()
+	log.Printf("把下载的 %s 移到了%s", local, platform.TrashName)
+	go a.rescan() // 删掉的视频马上从列表里消失，备份按钮也变回来
+	return nil
+}
+
+// onlyFiles 判断文件夹里是不是只有这些文件（不算隐藏文件和没下完的部分）。
+func onlyFiles(dir string, files []string) bool {
+	want := map[string]bool{}
+	for _, f := range files {
+		want[f] = true
+	}
+	only := true
+	filepath.WalkDir(dir, func(p string, e fs.DirEntry, err error) error {
+		switch {
+		case err != nil:
+			only = false
+			return filepath.SkipAll
+		case e.IsDir() || store.HiddenName(e.Name()) || strings.HasSuffix(p, partExt):
+			return nil
+		case !want[p]:
+			only = false
+			return filepath.SkipAll
+		}
+		return nil
+	})
+	return only
+}
+
 // ---- 本机网页用的接口 ----
 
 // apiPeerFiles 浏览同事共享文件夹里的一层。网页不能直接访问同事的 /peer/，由程序代为去要。
@@ -912,7 +1013,7 @@ func (a *App) apiStartDownloads(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]bool{"ok": true})
 }
 
-// apiDownloadAction：取消、重试、在访达或资源管理器里显示。
+// apiDownloadAction：取消、重试、在访达或资源管理器里显示、删除（移到废纸篓）。
 func (a *App) apiDownloadAction(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	var err error
@@ -923,6 +1024,8 @@ func (a *App) apiDownloadAction(w http.ResponseWriter, r *http.Request) {
 		err = a.retryDownload(id)
 	case "reveal":
 		err = a.revealDownload(id)
+	case "delete":
+		err = a.deleteDownload(id)
 	default:
 		http.NotFound(w, r)
 		return

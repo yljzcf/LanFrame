@@ -12,10 +12,9 @@
   <div class="brand">局域网审片</div>
   <div id="me"></div>
   <div class="spacer"></div>
-  <button id="btn-downloads" title="从同事那里拿的文件">下载 <span id="dl-badge" class="badge" hidden></span></button>
-  <button id="btn-add-peer">添加电脑</button>
   <button id="btn-help">使用说明</button>
-  <button id="btn-settings">设置</button>
+  <button id="btn-add-peer">添加用户</button>
+  <button id="btn-settings">软件配置</button>
 </header>
 <div id="share-error" hidden>
   <span id="share-error-text"></span>
@@ -41,6 +40,8 @@
 <main id="main">
   <aside id="sidebar">
     <div id="video-list"></div>
+    <!-- 从同事那里拿的文件：有下载记录时出现，点开看进度 -->
+    <div id="dl-strip" title="从同事那里拿的文件，点开看进度" hidden></div>
   </aside>
 
   <section id="stage">

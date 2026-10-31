@@ -4,12 +4,9 @@ import (
 	"crypto/subtle"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"html/template"
 	"io"
 	"io/fs"
-	"log"
-	"mime"
 	"net"
 	"net/http"
 	"os"
@@ -63,9 +60,6 @@ func (a *App) routes() http.Handler {
 	api.HandleFunc("POST /api/versions/answer", a.apiVersionAnswer)
 	api.HandleFunc("POST /api/versions/move", a.apiVersionMove)
 	api.HandleFunc("POST /api/versions/rename", a.apiVersionRename)
-	api.HandleFunc("GET /api/identity", a.apiExportIdentity)
-	api.HandleFunc("POST /api/identity", a.apiImportIdentity)
-	api.HandleFunc("POST /api/quit", a.apiQuit)
 	api.HandleFunc("POST /api/toggle", a.apiToggle)
 	api.HandleFunc("POST /api/update/check", a.apiUpdateCheck)
 	api.HandleFunc("POST /api/update/apply", a.apiUpdateApply)
@@ -475,40 +469,7 @@ func (a *App) apiVersionRename(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{"failed": failed})
 }
 
-func (a *App) apiExportIdentity(w http.ResponseWriter, r *http.Request) {
-	me, c := a.me(), a.config()
-	name := fmt.Sprintf("审片身份-%s-%s.json", c.Nickname, store.DeviceCode(me.ID))
-	w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": name}))
-	w.Header().Set("Content-Type", "application/json")
-	data, _ := json.MarshalIndent(me.Export(c.Nickname), "", "  ")
-	w.Write(data)
-}
-
-func (a *App) apiImportIdentity(w http.ResponseWriter, r *http.Request) {
-	var f store.IdentityFile
-	if err := readJSON(r, &f); err != nil {
-		httpErr(w, errors.New("不是有效的身份文件"), http.StatusBadRequest)
-		return
-	}
-	id, err := a.importIdentity(f)
-	if err != nil {
-		httpErr(w, err, http.StatusBadRequest)
-		return
-	}
-	writeJSON(w, map[string]string{"code": store.DeviceCode(id.ID)})
-}
-
-// apiQuit 从网页退出程序。
-func (a *App) apiQuit(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, map[string]bool{"ok": true})
-	go func() {
-		time.Sleep(300 * time.Millisecond)
-		log.Printf("从网页退出")
-		a.quit()
-	}()
-}
-
-// apiToggle 改托盘里也有的三个开关：运行服务、开机启动、开机后静默运行；
+// apiToggle 改托盘里也有的三个开关：开机启动、静默运行、启动服务；
 // 还有"允许同事下载共享文件夹里的文件"，以及记下已经提示过这件事。
 func (a *App) apiToggle(w http.ResponseWriter, r *http.Request) {
 	var body struct {

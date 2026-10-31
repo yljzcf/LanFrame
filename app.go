@@ -266,7 +266,7 @@ func (a *App) quit() {
 func (a *App) setup(nickname, shareDir, teamKey string) error {
 	nickname = strings.TrimSpace(nickname)
 	if nickname == "" || len([]rune(nickname)) > 20 {
-		return errors.New("昵称不能为空，最多 20 个字")
+		return errors.New("用户名不能为空，最多 20 个字")
 	}
 	st, err := os.Stat(shareDir)
 	if err != nil || !st.IsDir() {
@@ -283,32 +283,6 @@ func (a *App) setup(nickname, shareDir, teamKey string) error {
 		return a.openShare(shareDir, changed) // 换了文件夹时，网页上已经确认过把原有的东西挪进"分享"
 	}
 	return nil
-}
-
-// importIdentity 换成另一台电脑导出的身份。旧身份文件留一份备份。
-func (a *App) importIdentity(f store.IdentityFile) (*store.Identity, error) {
-	id, seed, err := f.Parse()
-	if err != nil {
-		return nil, err
-	}
-	if id.ID == a.me().ID {
-		return id, nil
-	}
-	path := filepath.Join(a.dataDir, "identity.key")
-	if old, err := os.ReadFile(path); err == nil {
-		os.WriteFile(path+".bak-"+time.Now().Format("20060102-150405"), old, 0o600)
-	}
-	if err := store.WriteIdentity(path, seed); err != nil {
-		return nil, err
-	}
-	a.mu.Lock()
-	a.id = id
-	if a.cfg.Nickname == "" && f.Nickname != "" {
-		a.cfg.Nickname = f.Nickname
-	}
-	c := a.cfg
-	a.mu.Unlock()
-	return id, a.saveConfig(c)
 }
 
 // Windows 文件名不允许的字符

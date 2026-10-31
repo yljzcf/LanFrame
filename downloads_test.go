@@ -280,6 +280,71 @@ func TestDownloadGoneAndCancel(t *testing.T) {
 	}
 }
 
+// 删除下载：下好的文件移到废纸篓，记录拿掉。还在下的不能删。
+// 文件夹里还有别的东西时只移走下载的文件，空下来的子文件夹删掉；只有下载的文件（不算隐藏文件）时整个文件夹移走。
+func TestDownloadDelete(t *testing.T) {
+	var trashed []string
+	old := trashPath
+	trashPath = func(p string) error {
+		trashed = append(trashed, p)
+		return os.RemoveAll(p)
+	}
+	t.Cleanup(func() { trashPath = old })
+
+	a, b, dest := downloadPair(t, nil)
+	writeShareFile(t, a, "素材/a.txt", "a")
+	writeShareFile(t, a, "素材/子/b.txt", "b")
+	writeShareFile(t, a, "单个.txt", "one")
+	if err := b.startDownloads(a.me().ID, []string{"素材"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := b.deleteDownload(b.downloadsView()[0].ID); err == nil || !strings.Contains(err.Error(), "先取消") {
+		t.Fatalf("还在下载的不能删：%v", err)
+	}
+	waitDownloads(t, b)
+	if err := b.startDownloads(a.me().ID, []string{"单个.txt"}); err != nil {
+		t.Fatal(err)
+	}
+	views := waitDownloads(t, b) // 最新的在前：单个.txt、素材
+
+	folder := filepath.Join(dest, "素材")
+	mine := filepath.Join(folder, "自己的.txt")
+	os.WriteFile(mine, []byte("x"), 0o644)
+	if err := b.deleteDownload(views[1].ID); err != nil {
+		t.Fatal(err)
+	}
+	if len(trashed) != 2 || fileExists(filepath.Join(folder, "a.txt")) || fileExists(filepath.Join(folder, "子")) {
+		t.Errorf("应该只移走下载的两个文件，空下来的“子”删掉：%v", trashed)
+	}
+	if got := readFile(t, mine); got != "x" {
+		t.Errorf("自己放的文件不应该动：%q", got)
+	}
+	if v := b.downloadsView(); len(v) != 1 || v[0].ID != views[0].ID {
+		t.Fatalf("删掉的下载应该从列表里拿掉：%+v", v)
+	}
+
+	trashed = nil
+	if err := b.deleteDownload(views[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	if len(trashed) != 1 || trashed[0] != filepath.Join(dest, "单个.txt") || len(b.downloadsView()) != 0 {
+		t.Errorf("单个文件应该移走、记录拿掉：%v %+v", trashed, b.downloadsView())
+	}
+
+	os.Remove(mine)
+	os.WriteFile(filepath.Join(folder, ".DS_Store"), []byte("x"), 0o644)
+	if err := b.startDownloads(a.me().ID, []string{"素材"}); err != nil {
+		t.Fatal(err)
+	}
+	trashed = nil
+	if err := b.deleteDownload(waitDownloads(t, b)[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	if len(trashed) != 1 || trashed[0] != folder || fileExists(folder) {
+		t.Errorf("文件夹里只有下载的文件时应该整个移走：%v", trashed)
+	}
+}
+
 // 团队口令不一致时拿不到对方的文件列表，提示说清楚原因。
 func TestDownloadTeamKeyMismatch(t *testing.T) {
 	a, b, _ := downloadPair(t, nil)

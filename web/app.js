@@ -133,7 +133,7 @@ function videoRow(v, ownerId, sub) {
 function backupButton(v, ownerId) {
   if (ownerId === S.me.id || v.missing) return '';
   if (v.local) return '<button disabled title="已经备份在你共享文件夹的“备份”里">已备份</button>';
-  if ((S.downloads || []).some((d) => d.fp === v.fp && dlActive(d))) return '<button disabled title="右上角“下载”里能看进度">备份中…</button>';
+  if ((S.downloads || []).some((d) => d.fp === v.fp && dlActive(d))) return '<button disabled title="左边列表底部能看进度">备份中…</button>';
   return '<button data-vtool="backup" title="拿一份原片存到你共享文件夹的“备份”里，原主人不在时同事也能从你这里看，批注是同一套">备份视频</button>';
 }
 
@@ -156,7 +156,7 @@ function renderVideos() {
     return `<div class="group-head"><span class="dot ${g.online ? 'on' : ''}"></span>${esc(g.name)}${!g.mine && !g.online ? '（离线）' : ''}${files}</div>${items}`;
   }).join('');
   if (!(S.peers || []).length) {
-    html += '<div class="empty-group">还没发现同事的电脑。确认对方已经打开程序；过一会儿还没出现，点右上角"添加电脑"输入对方 IP。</div>';
+    html += '<div class="empty-group">还没发现同事的电脑。确认对方已经打开程序；过一会儿还没出现，点右上角"添加用户"输入对方电脑的 IP。</div>';
   }
   $('#video-list').innerHTML = html;
 }
@@ -1289,7 +1289,7 @@ function renderUpdate() {
   return false;
 }
 
-// renderUpdateSettings 更新"设置"里程序版本那一行（设置窗口开着时每次轮询都会刷新）。
+// renderUpdateSettings 更新"软件配置"里程序版本那一行（窗口开着时每次轮询都会刷新）。
 function renderUpdateSettings() {
   const box = $('#su-update');
   if (!box) return;
@@ -1310,7 +1310,7 @@ function renderUpdateSettings() {
     else status = u.checked ? `已是最新（${fmtTime(u.checked)} 检查过）` : '已是最新';
     buttons = `<button data-act="check" ${u.busy ? 'disabled' : ''}>检查更新</button>`;
   }
-  const html = `<span class="muted">程序版本 ${esc(S.version)} · ${esc(status)}</span><span class="spacer"></span>${buttons}`;
+  const html = `<span>${esc(S.version)}</span><span class="muted">${esc(status)}</span><span class="spacer"></span>${buttons}`;
   if (box.dataset.html !== html) {
     box.innerHTML = html;
     box.dataset.html = html;
@@ -1351,7 +1351,7 @@ async function updateAction(e) {
 }
 $('#update-actions').onclick = updateAction;
 
-// ---------- 弹窗：设置、添加电脑、使用说明 ----------
+// ---------- 弹窗：软件配置、添加用户、使用说明 ----------
 
 function openModal(kind, html) {
   modalKind = kind;
@@ -1419,63 +1419,46 @@ function mountPicker(id, start, errEl) {
   return st;
 }
 
+// openSetup 是"软件配置"（第一次打开时是欢迎页）：基本信息、目录位置、开关、本机信息。
+// 用户名、团队口令、共享目录点"保存"才生效；开关改了立即生效，第一次设置时不显示。
 function openSetup(first) {
+  const ips = (S?.addrs || []).map((a) => `<code>${esc(a)}</code>`).join(' ') || '<span class="muted">没有检测到局域网地址</span>';
   openModal(first ? 'setup-first' : 'setup', `
-    <h2>${first ? '欢迎使用局域网审片' : '设置'}</h2>
-    ${first ? '<p class="muted">视频始终留在你自己的电脑上，同事通过局域网直接播放原片、写批注。开始前先做两件事：</p>' : ''}
-    <div class="field"><label>1. 你的昵称（同事会看到）</label><input type="text" id="su-name" maxlength="20" value="${esc(S?.me?.name || '')}"></div>
-    <div class="field"><label>2. 共享文件夹：程序会在里面建三个子文件夹——"分享"放要给同事看的视频和文件；"备份"放从同事那里拿来的东西（视频成为备份，原主人不在时同事也能从你这里看）；"批注"放所有批注，电脑之间自动同步，不要手动删改。文件夹里原有的东西会挪进"分享"。点文件夹进入，当前所在的就是要共享的文件夹。</label>
-      ${pickerHTML('su-picker')}
-    </div>
-    <div class="field"><label>3. 团队口令（可选）：设置后，只有填了相同口令的电脑能看到你的视频和批注。团队里每个人都要填一样的；不填就是局域网里谁都能看。</label>
+    <h2>${first ? '欢迎使用局域网审片' : '软件配置'}</h2>
+    ${first ? '<p class="muted">视频始终留在你自己的电脑上，同事通过局域网直接播放原片、写批注。开始前先填好下面几项：</p>' : ''}
+    <div class="section-title">基本信息</div>
+    <div class="field"><label>用户名（同事会看到）</label><input type="text" id="su-name" maxlength="20" value="${esc(S?.me?.name || '')}"></div>
+    <div class="field"><label>团队口令（可选）：只有填了相同口令的电脑能互相看到视频和批注，团队里每个人都要填一样的；不填就是局域网里谁都能看。</label>
       <input type="text" id="su-key" maxlength="64" placeholder="不填则不设口令" value="${esc(S?.teamKey || '')}"></div>
     <div class="section">
-      <div class="row"><span class="muted">你的设备码：<b id="su-code">${esc(S?.me?.code || '')}</b>${first && S?.version ? ` · 程序版本 ${esc(S.version)}` : ''}</span>
-        <span class="spacer"></span>
-        ${first ? '' : '<a class="btn" href="/api/identity" download>导出身份文件</a>'}
-        <label class="btn">${first ? '在别的电脑用过？导入身份文件' : '导入身份文件'}<input type="file" id="su-import" accept=".json,application/json" hidden></label></div>
-      <p class="muted">换电脑时，在旧电脑导出身份文件、在新电脑导入，你写过的批注仍然可以修改和删除。身份文件相当于你的签名，不要发给别人。</p>
+      <div class="section-title">目录位置</div>
+      <div class="field"><label>本机共享目录：程序会在里面自动建三个子文件夹——"分享"放要给同事看的视频和文件，"备份"放从同事那里拿来的东西，"批注"放所有批注（电脑之间自动同步，不要手动删改）。目录里原有的东西会挪进"分享"。点文件夹进入，当前所在的就是共享目录。</label>
+        ${pickerHTML('su-picker')}
+      </div>
     </div>
-    ${first ? '' : `<div class="section row" id="su-update"></div>
-    <div class="section">
-      <div class="muted" style="margin-bottom:8px">后台运行（托盘图标的菜单里也能改，改了立即生效）</div>
-      <label class="toggle"><input type="checkbox" data-toggle="running" ${S.paused ? '' : 'checked'}>
-        <span>运行服务<br><span class="muted">取消后程序留在后台，但不分享视频、不同步批注，同事那边显示你离线</span></span></label>
+    ${first ? '' : `<div class="section">
+      <div class="section-title">运行选项 <span class="muted">（改了立即生效）</span></div>
       <label class="toggle"><input type="checkbox" data-toggle="autostart" ${S.toggles?.autostart ? 'checked' : ''} ${S.toggles?.autostartSupported ? '' : 'disabled'}>
         <span>开机启动</span></label>
       <label class="toggle"><input type="checkbox" data-toggle="silentStart" ${S.toggles?.silentStart ? 'checked' : ''} ${S.toggles?.autostart ? '' : 'disabled'}>
-        <span>开机后静默运行<br><span class="muted">开机启动时不弹出浏览器，只在托盘里待命</span></span></label>
-    </div>
-    <div class="section">
-      <div class="muted" style="margin-bottom:8px">从同事电脑拿文件</div>
+        <span>静默运行<br><span class="muted">开机启动时不弹出浏览器，只在托盘里待命</span></span></label>
+      <label class="toggle"><input type="checkbox" data-toggle="running" ${S.paused ? '' : 'checked'}>
+        <span>启动服务<br><span class="muted">关掉后程序留在后台，但不分享视频、不同步批注，同事那边显示你离线</span></span></label>
       <label class="toggle"><input type="checkbox" data-toggle="fileShare" ${S.fileShare ? 'checked' : ''}>
-        <span>允许同事下载我共享文件夹里的所有文件<br><span class="muted">同事在左边点你名字旁的"文件"就能浏览和下载"分享"和"备份"，只能拿，不能改、不能删。"批注"和隐藏文件除外。关掉后同事仍然能看你的视频</span></span></label>
-      <p class="muted">从同事那里拿的东西存在共享文件夹的"备份"里，按来源分文件夹。</p>
+        <span>允许同事下载我共享文件夹里的所有文件<br><span class="muted">同事能浏览和下载你的"分享"和"备份"、备份你的视频，只能拿，不能改、不能删；"批注"和隐藏文件除外。关掉后同事仍然能看你的视频</span></span></label>
+    </div>`}
+    <div class="section">
+      <div class="section-title">本机信息</div>
+      <div class="info-row"><span class="muted">设备代码</span><b>${esc(S?.me?.code || '')}</b></div>
+      <div class="info-row"><span class="muted">本机 IP</span><span>${ips}</span></div>
+      <div class="info-row"><span class="muted">程序版本</span>${first ? `<span>${esc(S?.version || '')}</span>` : '<div class="row" id="su-update"></div>'}</div>
     </div>
-    <div class="section row"><span class="muted">退出后，同事就看不了你的视频了。</span><span class="spacer"></span><button class="danger" id="su-quit">退出程序</button></div>`}
     <div class="modal-actions"><span class="error" id="su-err"></span>
       ${first ? '' : '<button id="su-cancel">取消</button>'}<button class="primary" id="su-ok">${first ? '开始使用' : '保存'}</button></div>`);
   const share = mountPicker('su-picker', S?.shareDir || '', $('#su-err'));
   $('#su-cancel')?.addEventListener('click', closeModal);
   $('#su-update')?.addEventListener('click', updateAction);
   renderUpdateSettings();
-  $('#su-import').addEventListener('change', async (e) => {
-    const file = e.target.files[0];
-    e.target.value = '';
-    if (!file) return;
-    try {
-      const data = JSON.parse(await file.text());
-      const who = data.nickname ? `「${data.nickname}」` : '文件里';
-      if (!confirm(`导入后，这台电脑会使用${who}的身份写批注。不要在两台电脑上同时使用同一个身份，导入后请不要再打开旧电脑上的程序。继续吗？`)) return;
-      const r = await post('/api/identity', data);
-      $('#su-code').textContent = r.code;
-      if (data.nickname && !$('#su-name').value.trim()) $('#su-name').value = data.nickname;
-      $('#su-err').textContent = '';
-      alert(`已导入身份，设备码 ${r.code}`);
-    } catch (err) {
-      $('#su-err').textContent = err instanceof SyntaxError ? '不是有效的身份文件' : err.message;
-    }
-  });
   document.querySelectorAll('[data-toggle]').forEach((box) => box.addEventListener('change', async () => {
     try {
       await post('/api/toggle', { name: box.dataset.toggle, on: box.checked });
@@ -1488,14 +1471,9 @@ function openSetup(first) {
       $('#su-err').textContent = e.message;
     }
   }));
-  $('#su-quit')?.addEventListener('click', async () => {
-    if (!confirm('退出程序后，同事就看不了你的视频了。确定退出吗？')) return;
-    try { await post('/api/quit'); } catch { /* 程序已经在退出 */ }
-    document.body.insertAdjacentHTML('beforeend', '<div id="quit-screen"><div><h2>程序已退出</h2><p class="muted">可以关闭这个页面。再次双击程序就能重新打开。</p></div></div>');
-  });
   $('#su-ok').addEventListener('click', async () => {
     const nickname = $('#su-name').value.trim();
-    if (!nickname) { $('#su-err').textContent = '先填一个昵称'; return; }
+    if (!nickname) { $('#su-err').textContent = '先填一个用户名'; return; }
     if (share.roots.some((x) => x.path === share.path) && !confirm('共享整个个人文件夹或整个磁盘，会扫描里面所有视频，里面的所有文件同事也都能下载。建议新建一个专门的文件夹。仍然继续吗？')) return;
     if (share.path !== S?.shareDir && share.movable > 0
       && !confirm(`这个文件夹里原有的 ${share.movable} 项会挪进新建的"分享"子文件夹。剪辑软件工程里引用了这些文件的，会显示素材离线，需要重新链接。继续吗？`)) return;
@@ -1513,8 +1491,8 @@ function openSetup(first) {
 
 function openAddPeer() {
   openModal('peer', `
-    <h2>添加电脑</h2>
-    <p class="muted">同一个局域网里打开了程序的电脑一般会自动出现。如果过了一会儿还没出现（比如不在同一个网段，或者公司网络屏蔽了自动发现），在这里输入对方的 IP 地址。</p>
+    <h2>添加用户</h2>
+    <p class="muted">同一个局域网里打开了程序的同事一般会自动出现。如果过了一会儿还没出现（比如不在同一个网段，或者公司网络屏蔽了自动发现），在这里输入对方电脑的 IP 地址。</p>
     <div class="field"><label>对方的 IP 地址</label><input type="text" id="ap-addr" placeholder="例如 192.168.1.20"></div>
     <p class="muted">你的地址：${myAddrs()}</p>
     <div class="modal-actions"><span class="error" id="ap-err"></span><button id="ap-cancel">取消</button><button class="primary" id="ap-ok">添加</button></div>`);
@@ -1568,10 +1546,10 @@ function openHelp() {
     <h3>从同事电脑拿文件</h3>
     <ul>
       <li>左边同事名字旁点"文件"，能浏览他共享文件夹里的所有文件，勾选后点"下载"，整个文件夹也能一次拿走。对方不用在电脑前操作。</li>
-      <li>下载在后台进行，关掉这个网页也会继续；断网、对方离线或者程序重启后，从断点接着下。右上角"下载"里能看进度。</li>
+      <li>下载在后台进行，关掉这个网页也会继续；断网、对方离线或者程序重启后，从断点接着下。左边列表底部的"下载中"点开能看进度；不要了的点"删除"，会移到废纸篓（Windows 是回收站）。</li>
       <li>拿来的东西存在你共享文件夹的"备份"里，按来源分文件夹。拿来的视频成为原主人视频的备份：列表里仍然在原主人名下，不算你的视频；原主人不在时，同事能从你这里播放原片，批注也是同一套。原主人已经删了的，列表里显示备份版，文件名下面标"备份版"。</li>
       <li>只想备份某个视频：选中同事的视频，名字下面点"备份视频"。</li>
-      <li>同事也能这样拿你共享文件夹里的文件（只能拿，不能改、不能删）；不想开放的话在"设置"里关掉。</li>
+      <li>同事也能这样拿你共享文件夹里的文件（只能拿，不能改、不能删）；不想开放的话在"软件配置"里关掉。</li>
     </ul>
     <h3>注意</h3>
     <ul>
@@ -1668,7 +1646,7 @@ async function startDownload() {
   }
   closeModal();
   await refresh();
-  toast(`开始下载 ${paths.length} 项，右上角"下载"里能看进度`);
+  toast(`开始下载 ${paths.length} 项，左边列表底部能看进度`);
 }
 
 const dlStates = {
@@ -1689,8 +1667,16 @@ let dlSeen = null; // 已经提示过"下载完了"的下载
 function renderDownloads() {
   const list = S.downloads || [];
   const active = list.filter(dlActive).length;
-  $('#dl-badge').hidden = !active;
-  $('#dl-badge').textContent = active;
+  // 侧栏底部的下载条：有下载记录就显示；全部结束、清除以后就没了
+  const failed = list.filter((d) => d.state === 'failed' || d.state === 'partial').length;
+  const strip = $('#dl-strip');
+  strip.hidden = !list.length;
+  strip.className = active ? '' : failed ? 'failed' : 'idle';
+  const html = active ? `下载中 <span class="badge">${active}</span> 项` : failed ? `${failed} 项没下载成功` : '下载记录';
+  if (strip.dataset.html !== html) {
+    strip.innerHTML = `${html}<span class="spacer"></span>查看`;
+    strip.dataset.html = html;
+  }
   // 刚打开网页时已经下完的不再提示
   if (dlSeen === null) dlSeen = new Set(list.filter((d) => d.doneAt).map((d) => d.id));
   const done = list.filter((d) => d.doneAt && !dlSeen.has(d.id));
@@ -1706,7 +1692,7 @@ function renderDownloads() {
   $('#fileshare-bar').hidden = !S.fileShareNotice;
   if (S.fileShareNotice) {
     const text = '共享文件夹分成了三个子文件夹："分享"放给同事看的视频和文件，"备份"放从同事那里拿的东西，"批注"放批注（不要手动删改）。'
-      + (S.layoutNote || '') + (S.fileShare ? '共享文件夹里的文件同事都能浏览和下载，只能拿，不能改、不能删；不想开放可以在"设置"里关掉。' : '');
+      + (S.layoutNote || '') + (S.fileShare ? '共享文件夹里的文件同事都能浏览和下载，只能拿，不能改、不能删；不想开放可以在"软件配置"里关掉。' : '');
     if ($('#fileshare-text').textContent !== text) $('#fileshare-text').textContent = text;
   }
   if (modalKind === 'downloads') renderDownloadList();
@@ -1733,6 +1719,7 @@ function renderDownloadList() {
     if (dlActive(d)) btns.push(`<button data-dl-act="cancel" data-id="${esc(d.id)}">取消</button>`);
     if (['failed', 'partial', 'canceled'].includes(d.state)) btns.push(`<button data-dl-act="retry" data-id="${esc(d.id)}">重试</button>`);
     if (d.state !== 'canceled') btns.push(`<button data-dl-act="reveal" data-id="${esc(d.id)}">打开所在文件夹</button>`);
+    if (!dlActive(d)) btns.push(`<button class="danger" data-dl-act="delete" data-id="${esc(d.id)}">删除</button>`);
     const errs = [d.err, ...(d.failed || [])].filter(Boolean);
     return `<div class="dl-item ${d.state}">
       <div class="row"><b class="dl-name">${d.dir ? '📁' : '📄'} ${esc(d.name)}</b><span class="muted">来自 ${esc(d.peerName)}</span><span class="spacer"></span><span class="dl-state">${dlStates[d.state] || d.state}</span></div>
@@ -1753,6 +1740,7 @@ async function dlAction(e) {
   if (!btn) return;
   const act = btn.dataset.dlAct;
   if (act === 'hide') { $('#dl-done-bar').hidden = true; return; }
+  if (act === 'delete') { deleteDownload(btn.dataset.id); return; }
   try {
     if (act === 'open-dir') await post('/api/downloads/open');
     else if (act === 'clear') await post('/api/downloads/clear');
@@ -1766,6 +1754,31 @@ async function dlAction(e) {
 }
 $('#dl-done-actions').onclick = dlAction;
 
+// deleteDownload 把一项下载拿到的东西移到废纸篓（Windows 是回收站），这条下载记录也拿掉。
+// 确认窗口会盖住下载列表，确认或取消后再把下载列表打开。
+async function deleteDownload(id) {
+  const d = (S.downloads || []).find((x) => x.id === id);
+  if (!d) return;
+  const trash = S.os === 'windows' ? '回收站' : '废纸篓';
+  let body = !d.done ? '还没有下载到文件，只删掉这条下载记录。'
+    : `${d.dir ? `文件夹「${d.name}」里已经下好的 ${d.done} 个文件` : `「${d.name}」`}会移到${trash}，需要时可以从${trash}里找回来。这条下载记录也一起删掉。`;
+  if (d.fp && d.done) body += `\n\n这是 ${d.peerName} 的视频的备份，删除后，${d.peerName} 不在时同事就不能从你这里看这个视频了。`;
+  const ok = await askConfirm('删除下载的文件', body, d.done ? `移到${trash}` : '删除记录');
+  let err = '';
+  if (ok) {
+    try {
+      await post(`/api/downloads/${encodeURIComponent(id)}/delete`);
+      lastListKey = '';
+      await refresh();
+    } catch (e) {
+      err = e.message;
+    }
+  }
+  openDownloads();
+  if (err) $('#dl-err').textContent = err;
+  else if (ok && d.done) toast(`已移到${trash}`);
+}
+
 async function backupVideo() {
   if (!cur) return;
   try {
@@ -1776,9 +1789,9 @@ async function backupVideo() {
   }
   lastListKey = '';
   await refresh();
-  toast(`开始备份，存到你共享文件夹的"备份/${cur.ownerName}"里，右上角"下载"里能看进度`);
+  toast(`开始备份，存到你共享文件夹的"备份/${cur.ownerName}"里，左边列表底部能看进度`);
 }
-$('#btn-downloads').onclick = () => S?.configured && openDownloads();
+$('#dl-strip').onclick = () => S?.configured && openDownloads();
 
 // 从 0.3.x 更新上来的用户，提示一次共享文件夹里的文件同事都能下载了
 $('#fileshare-actions').onclick = async (e) => {

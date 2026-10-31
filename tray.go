@@ -19,9 +19,9 @@ func (a *App) runTray(url string) {
 		mUpdate := systray.AddMenuItem("", "换上已经下载好的新版本，程序会重启几秒钟")
 		mUpdate.Hide()
 		systray.AddSeparator()
-		mRun := systray.AddMenuItemCheckbox("运行服务", "取消后程序留在后台，但不再分享视频、不再同步批注", true)
 		mAuto := systray.AddMenuItemCheckbox("开机启动", "登录电脑时自动打开程序", false)
-		mSilent := systray.AddMenuItemCheckbox("开机后静默运行", "开机启动时不弹出浏览器", false)
+		mSilent := systray.AddMenuItemCheckbox("静默运行", "开机启动时不弹出浏览器", false)
+		mRun := systray.AddMenuItemCheckbox("启动服务", "关掉后程序留在后台，但不再分享视频、不再同步批注", true)
 		systray.AddSeparator()
 		mQuit := systray.AddMenuItem("退出", "退出后同事就看不了你的视频了")
 

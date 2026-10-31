@@ -17,3 +17,7 @@ func MarkDownloaded(path string) error { return nil }
 func OpenFolder(dir string) error { return exec.Command("xdg-open", dir).Start() }
 
 func Reveal(path string) error { return exec.Command("xdg-open", filepath.Dir(path)).Start() }
+
+const TrashName = "回收站"
+
+func Trash(path string) error { return exec.Command("gio", "trash", path).Run() }

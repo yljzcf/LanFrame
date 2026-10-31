@@ -1423,34 +1423,34 @@ function mountPicker(id, start, errEl) {
 // 用户名、团队口令、共享目录点"保存"才生效；开关改了立即生效，第一次设置时不显示。
 function openSetup(first) {
   const ips = (S?.addrs || []).map((a) => `<code>${esc(a)}</code>`).join(' ') || '<span class="muted">没有检测到局域网地址</span>';
+  // 说明尽量放在鼠标悬停的提示里，界面上只留名字
   openModal(first ? 'setup-first' : 'setup', `
     <h2>${first ? '欢迎使用局域网审片' : '软件配置'}</h2>
-    ${first ? '<p class="muted">视频始终留在你自己的电脑上，同事通过局域网直接播放原片、写批注。开始前先填好下面几项：</p>' : ''}
+    ${first ? '<p class="muted">视频留在各自电脑上，同事通过局域网直接看原片、写批注。</p>' : ''}
     <div class="section-title">基本信息</div>
-    <div class="field"><label>用户名（同事会看到）</label><input type="text" id="su-name" maxlength="20" value="${esc(S?.me?.name || '')}"></div>
-    <div class="field"><label>团队口令（可选）：只有填了相同口令的电脑能互相看到视频和批注，团队里每个人都要填一样的；不填就是局域网里谁都能看。</label>
-      <input type="text" id="su-key" maxlength="64" placeholder="不填则不设口令" value="${esc(S?.teamKey || '')}"></div>
+    <div class="field-row">
+      <label class="inline-field">用户名<input type="text" id="su-name" maxlength="20" placeholder="同事看到的名字" value="${esc(S?.me?.name || '')}"></label>
+      <label class="inline-field" title="团队里每个人填一样的；口令相同的电脑才能互相看到视频和批注">团队口令<input type="text" id="su-key" maxlength="64" placeholder="可不填" value="${esc(S?.teamKey || '')}"></label>
+    </div>
     <div class="section">
       <div class="section-title">目录位置</div>
-      <div class="field"><label>本机共享目录：程序会在里面自动建三个子文件夹——"分享"放要给同事看的视频和文件，"备份"放从同事那里拿来的东西，"批注"放所有批注（电脑之间自动同步，不要手动删改）。目录里原有的东西会挪进"分享"。点文件夹进入，当前所在的就是共享目录。</label>
+      <div class="field"><label>本机共享目录 <span class="hint">（自动建"分享""备份""批注"三个子文件夹）</span></label>
         ${pickerHTML('su-picker')}
       </div>
     </div>
     ${first ? '' : `<div class="section">
-      <div class="section-title">运行选项 <span class="muted">（改了立即生效）</span></div>
-      <label class="toggle"><input type="checkbox" data-toggle="autostart" ${S.toggles?.autostart ? 'checked' : ''} ${S.toggles?.autostartSupported ? '' : 'disabled'}>
-        <span>开机启动</span></label>
-      <label class="toggle"><input type="checkbox" data-toggle="silentStart" ${S.toggles?.silentStart ? 'checked' : ''} ${S.toggles?.autostart ? '' : 'disabled'}>
-        <span>静默运行<br><span class="muted">开机启动时不弹出浏览器，只在托盘里待命</span></span></label>
-      <label class="toggle"><input type="checkbox" data-toggle="running" ${S.paused ? '' : 'checked'}>
-        <span>启动服务<br><span class="muted">关掉后程序留在后台，但不分享视频、不同步批注，同事那边显示你离线</span></span></label>
-      <label class="toggle"><input type="checkbox" data-toggle="fileShare" ${S.fileShare ? 'checked' : ''}>
-        <span>允许同事下载我共享文件夹里的所有文件<br><span class="muted">同事能浏览和下载你的"分享"和"备份"、备份你的视频，只能拿，不能改、不能删；"批注"和隐藏文件除外。关掉后同事仍然能看你的视频</span></span></label>
+      <div class="section-title">运行选项 <span class="hint">（立即生效）</span></div>
+      <div class="toggle-row">
+        <label class="toggle"><input type="checkbox" data-toggle="autostart" ${S.toggles?.autostart ? 'checked' : ''} ${S.toggles?.autostartSupported ? '' : 'disabled'}>开机启动</label>
+        <label class="toggle" title="开机启动时不打开浏览器，只在托盘里待命"><input type="checkbox" data-toggle="silentStart" ${S.toggles?.silentStart ? 'checked' : ''} ${S.toggles?.autostart ? '' : 'disabled'}>静默运行</label>
+      </div>
+      <label class="toggle" title="关掉后不分享视频、不同步批注，同事那边显示你离线"><input type="checkbox" data-toggle="running" ${S.paused ? '' : 'checked'}>启动服务</label>
+      <label class="toggle" title="同事能浏览、下载你的“分享”和“备份”，也能备份你的视频；只能拿，不能改、不能删。关掉后同事仍然能看你的视频"><input type="checkbox" data-toggle="fileShare" ${S.fileShare ? 'checked' : ''}>允许同事下载我共享文件夹里的所有文件</label>
     </div>`}
     <div class="section">
       <div class="section-title">本机信息</div>
-      <div class="info-row"><span class="muted">设备代码</span><b>${esc(S?.me?.code || '')}</b></div>
-      <div class="info-row"><span class="muted">本机 IP</span><span>${ips}</span></div>
+      <div class="info-row"><span class="kv"><span class="muted">设备代码</span><b>${esc(S?.me?.code || '')}</b></span>
+        <span class="kv"><span class="muted">本机 IP</span><span>${ips}</span></span></div>
       <div class="info-row"><span class="muted">程序版本</span>${first ? `<span>${esc(S?.version || '')}</span>` : '<div class="row" id="su-update"></div>'}</div>
     </div>
     <div class="modal-actions"><span class="error" id="su-err"></span>
@@ -1474,9 +1474,9 @@ function openSetup(first) {
   $('#su-ok').addEventListener('click', async () => {
     const nickname = $('#su-name').value.trim();
     if (!nickname) { $('#su-err').textContent = '先填一个用户名'; return; }
-    if (share.roots.some((x) => x.path === share.path) && !confirm('共享整个个人文件夹或整个磁盘，会扫描里面所有视频，里面的所有文件同事也都能下载。建议新建一个专门的文件夹。仍然继续吗？')) return;
+    if (share.roots.some((x) => x.path === share.path) && !confirm('选的是整个个人文件夹或磁盘，里面所有文件同事都能下载。建议新建一个专门的文件夹。仍然继续吗？')) return;
     if (share.path !== S?.shareDir && share.movable > 0
-      && !confirm(`这个文件夹里原有的 ${share.movable} 项会挪进新建的"分享"子文件夹。剪辑软件工程里引用了这些文件的，会显示素材离线，需要重新链接。继续吗？`)) return;
+      && !confirm(`里面原有的 ${share.movable} 项会挪进"分享"，剪辑工程里引用了它们的要重新链接素材。继续吗？`)) return;
     try {
       await post('/api/setup', { nickname, shareDir: share.path, teamKey: $('#su-key').value.trim() });
       closeModal();
@@ -1492,7 +1492,7 @@ function openSetup(first) {
 function openAddPeer() {
   openModal('peer', `
     <h2>添加用户</h2>
-    <p class="muted">同一个局域网里打开了程序的同事一般会自动出现。如果过了一会儿还没出现（比如不在同一个网段，或者公司网络屏蔽了自动发现），在这里输入对方电脑的 IP 地址。</p>
+    <p class="muted">同事一般会自动出现；过一会儿还没出现（比如不在同一网段），输入对方电脑的 IP。</p>
     <div class="field"><label>对方的 IP 地址</label><input type="text" id="ap-addr" placeholder="例如 192.168.1.20"></div>
     <p class="muted">你的地址：${myAddrs()}</p>
     <div class="modal-actions"><span class="error" id="ap-err"></span><button id="ap-cancel">取消</button><button class="primary" id="ap-ok">添加</button></div>`);
@@ -1517,49 +1517,38 @@ function openHelp() {
   openModal('help', `
     <h2>使用说明</h2>
     <h3>看片</h3>
-    <ol>
-      <li>左边列出你和同事分享的视频，绿点表示对方在线。点一下就能播放，播放的是对方电脑上的原片，不压缩。</li>
-      <li>空格播放/暂停，← → 逐帧移动，按住 Shift 一次移动 10 帧。</li>
-    </ol>
-    <h3>写批注</h3>
-    <ol>
-      <li>暂停到想说的那一帧，点"批注这一帧"或按 C。</li>
-      <li>在画面上用自由画、箭头、方框、文字标出位置，下面写文字；可以添加图片，也可以直接粘贴截图。</li>
-      <li>点"发布批注"。所有人都会看到。右边点一条批注的缩略图或时间码会跳到那一帧并显示标注；批注太长时点文字可以展开全文和附图。</li>
-    </ol>
-    <h3>批注的规则</h3>
     <ul>
-      <li>自己写的批注可以修改（保留历史）和删除，删除会同步清掉所有电脑上的这条批注。</li>
-      <li>共享文件夹里有三个子文件夹：要给同事看的视频和文件放进"分享"；"备份"放从同事那里拿的东西；"批注"放所有批注，电脑之间自动同步，请不要手动删改。</li>
+      <li>左边是大家分享的视频，绿点表示在线，点一下播放原片。</li>
+      <li>空格播放/暂停，← → 逐帧，Shift + ← → 一次 10 帧。</li>
+    </ul>
+    <h3>批注</h3>
+    <ul>
+      <li>暂停到那一帧，点"批注这一帧"（C），画标注、写文字、贴图，再点"发布批注"。</li>
+      <li>点批注的缩略图或时间码跳到那一帧。自己的批注能改、能删，每条都能回复。</li>
+      <li>"导出批注"把当前版本的批注存成网页，可打印成 PDF。</li>
+    </ul>
+    <h3>视频</h3>
+    <ul>
+      <li>给同事看的视频放进共享文件夹的"分享"（"我的视频"旁点"打开文件夹"）。</li>
+      <li>名字相近的新文件会问是不是新版本；自己的视频能"改名""调整版本"。</li>
+      <li>"分享视频"复制一条链接，同事点开直接看这个视频。</li>
+    </ul>
+    <h3>从同事那里拿文件</h3>
+    <ul>
+      <li>点同事名字旁的"文件"勾选下载，或选中视频点"备份视频"，存到你的"备份"里。</li>
+      <li>后台下载，断了会接着下；进度在左边列表底部，不要的可以删除（移到${S?.os === 'windows' ? '回收站' : '废纸篓'}）。</li>
+      <li>拿来的视频是原主人视频的备份，原主人不在时同事也能从你这里看。</li>
     </ul>
     <h3>让同事加入</h3>
-    <ol>
-      <li>让同事在浏览器里打开 ${myAddrs()}，下载程序。</li>
-      <li>双击运行，按提示允许防火墙和本地网络访问。</li>
-    </ol>
-    <h3>版本</h3>
     <ul>
-      <li>重新导出的文件如果和之前的视频名字相近（比如同名覆盖、_v2、(1)），会问你是不是新版本。确认后列在同一个视频下面，旧版本的批注保留。</li>
-      <li>自己的视频可以点"调整版本"，手动归到别的视频下面或单独拆出来。</li>
-      <li>自己的视频可以点"改名"起一个视频名称（比如 LAX43_EP03），还可以顺便把电脑上的文件改成"名称_v版本号"（比如 LAX43_EP03_v02.mp4）。改名不影响批注。</li>
-    </ul>
-    <h3>从同事电脑拿文件</h3>
-    <ul>
-      <li>左边同事名字旁点"文件"，能浏览他共享文件夹里的所有文件，勾选后点"下载"，整个文件夹也能一次拿走。对方不用在电脑前操作。</li>
-      <li>下载在后台进行，关掉这个网页也会继续；断网、对方离线或者程序重启后，从断点接着下。左边列表底部的"下载中"点开能看进度；不要了的点"删除"，会移到废纸篓（Windows 是回收站）。</li>
-      <li>拿来的东西存在你共享文件夹的"备份"里，按来源分文件夹。拿来的视频成为原主人视频的备份：列表里仍然在原主人名下，不算你的视频；原主人不在时，同事能从你这里播放原片，批注也是同一套。原主人已经删了的，列表里显示备份版，文件名下面标"备份版"。</li>
-      <li>只想备份某个视频：选中同事的视频，名字下面点"备份视频"。</li>
-      <li>同事也能这样拿你共享文件夹里的文件（只能拿，不能改、不能删）；不想开放的话在"软件配置"里关掉。</li>
+      <li>同事用浏览器打开 ${myAddrs()} 下载程序，双击运行，允许防火墙和本地网络访问。</li>
     </ul>
     <h3>注意</h3>
     <ul>
-      <li>程序没有窗口，界面就是这个网页。托盘里有它的图标（Mac 在屏幕顶部菜单栏，Windows 在右下角），可以打开界面、暂停服务、设置开机启动、退出；再次双击程序也会重新打开这个页面。</li>
-      <li>左侧当前视频名下面的"分享视频"会复制一段文字，同事点里面的链接会直接打开这个视频。对方要先打开审片程序。</li>
-      <li>每条批注都可以"回复"，回复显示在原批注下面，时间码和原批注一样。</li>
-      <li>"导出批注"会把当前版本的所有批注（带截图和回复）导出成一个网页文件，浏览器打开就能看，也能打印成 PDF。</li>
-      <li>分享视频期间不要退出程序，也不要合上笔记本让电脑睡眠，否则同事播不了你的视频。</li>
-      <li>浏览器只能播放 H.264 等常见编码，ProRes 等格式暂不支持。</li>
-      <li>程序会在后台下载新版本，下载好后顶部会提示，点"立即更新"程序重启几秒钟就换好了。</li>
+      <li>程序在托盘里运行（Mac 在顶部菜单栏，Windows 在右下角），关掉网页不会退出。</li>
+      <li>分享期间别退出程序、别让电脑睡眠，否则同事看不了。</li>
+      <li>只能播放 H.264 等常见编码，ProRes 不行。</li>
+      <li>"批注"文件夹会自动同步，不要手动改动。</li>
     </ul>
     <div class="modal-actions"><button class="primary" id="help-ok">知道了</button></div>`);
   $('#help-ok').onclick = closeModal;

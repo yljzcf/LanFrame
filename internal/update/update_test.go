@@ -161,7 +161,7 @@ func TestCache(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(dir, "0.3.1")); err == nil {
 		t.Fatal("换成新版本后旧版本的文件夹应该删掉")
 	}
-	if _, _, ok := c.Path("windows"); ok {
+	if _, _, ok := c.Path("windows"); ok || c.Complete() != "" {
 		t.Fatal("还没下载的安装包不应该算下载好了")
 	}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.Write(exe) }))
@@ -171,6 +171,9 @@ func TestCache(t *testing.T) {
 	}
 	if path, _, ok := c.Path("windows"); !ok || c.Files()["lan-video-review-windows.exe"] != path {
 		t.Fatal("下载好的安装包应该能找到")
+	}
+	if c.Complete() != "0.3.2" {
+		t.Fatal("安装包都下载好后，缓存的版本应该算下载全了")
 	}
 	if err := c.Download(context.Background(), srv.Client(), srv.URL, "darwin"); err == nil {
 		t.Fatal("清单里没有的系统应该下载失败")

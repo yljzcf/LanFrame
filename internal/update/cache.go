@@ -94,8 +94,26 @@ func (c *Cache) Path(goos string) (path string, f File, ok bool) {
 		return "", File{}, false
 	}
 	path = filepath.Join(c.dir, m.Version, f.Name)
+	return path, f, downloaded(path, f)
+}
+
+// Complete 返回安装包全都下载好的缓存版本；还有没下完的，或者没有缓存时为空。
+func (c *Cache) Complete() string {
+	_, m := c.Manifest()
+	if m == nil {
+		return ""
+	}
+	for _, f := range m.Files {
+		if !downloaded(filepath.Join(c.dir, m.Version, f.Name), f) {
+			return ""
+		}
+	}
+	return m.Version
+}
+
+func downloaded(path string, f File) bool {
 	st, err := os.Stat(path)
-	return path, f, err == nil && st.Mode().IsRegular() && st.Size() == f.Size
+	return err == nil && st.Mode().IsRegular() && st.Size() == f.Size
 }
 
 // Files 返回已经下载好的安装包：文件名 -> 路径。

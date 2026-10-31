@@ -82,6 +82,19 @@ func (u *updater) known() string {
 	return version
 }
 
+// unfinished 返回还有安装包要接着下载的缓存清单，不用下载时返回 nil。
+// 缓存的版本比正在运行的新时要下；已经是这个版本了，只有之前就在中转的，才把缺的另一个系统的安装包补上。
+func (u *updater) unfinished() *update.Manifest {
+	_, m := u.cache.Manifest()
+	if m == nil || u.cache.Complete() != "" {
+		return nil
+	}
+	if !update.Newer(m.Version, version) && len(u.cache.Files()) == 0 {
+		return nil
+	}
+	return m
+}
+
 // ready 判断新版本的安装包是否已经下载好，可以换上。
 func (u *updater) ready() (string, bool) {
 	v := u.cache.Version()
@@ -171,12 +184,11 @@ func (a *App) updateLoop() {
 			a.upd.mu.Lock()
 			due := time.Now().After(a.upd.next)
 			a.upd.mu.Unlock()
-			_, _, ok := a.upd.cache.Path(runtime.GOOS)
 			switch {
 			case due:
 				a.upd.kick(updateKick{github: true})
-			case update.Newer(a.upd.cache.Version(), version) && !ok:
-				a.upd.kick(updateKick{}) // 新版本还没下载完，接着下
+			case a.upd.unfinished() != nil:
+				a.upd.kick(updateKick{}) // 安装包还没下载全，接着下
 			}
 			continue
 		}
@@ -303,12 +315,8 @@ func (a *App) fetchManifest(url, from string) error {
 // 来源先找缓存了同一个版本的同事，再找 GitHub。
 func (a *App) fetchPackages(manual bool) {
 	u := a.upd
-	_, m := u.cache.Manifest()
+	m := u.unfinished()
 	if m == nil {
-		return
-	}
-	// 已经是这个版本了：只有之前就在中转的，才把缺的另一个系统的安装包补上
-	if !update.Newer(m.Version, version) && len(u.cache.Files()) == 0 {
 		return
 	}
 	systems := []string{runtime.GOOS}

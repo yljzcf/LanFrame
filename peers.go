@@ -41,7 +41,7 @@ type Peer struct {
 	LastSeen    int64               `json:"lastSeen"`
 	KeyMismatch bool                `json:"keyMismatch"`
 	Version     string              `json:"version,omitempty"` // 对方运行的版本
-	Update      string              `json:"update,omitempty"`  // 对方缓存里可以给别人下载的版本
+	Update      string              `json:"update,omitempty"`  // 对方缓存里安装包都下载好、可以给别人的版本
 	Videos      []*media.VideoEntry `json:"videos"`
 }
 
@@ -229,7 +229,7 @@ type peerInfo struct {
 	Port    int    `json:"port"`
 	Locked  bool   `json:"locked"`            // 对方设了团队口令
 	Version string `json:"version,omitempty"` // 0.3.0 起才有
-	Update  string `json:"update,omitempty"`  // 缓存里可以给别人下载的版本，见 update.go
+	Update  string `json:"update,omitempty"`  // 缓存里安装包都下载好、可以给别人的版本，见 update.go
 }
 
 func (a *App) fetchInfo(ctx context.Context, addr string) (*peerInfo, error) {

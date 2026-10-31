@@ -94,6 +94,38 @@ func TestUpdateFromPeer(t *testing.T) {
 	}
 }
 
+// 安装包还没下载全时，不对同事说有新版本，免得他们来要时还没下完；下载全之前每分钟接着下。
+func TestPeerInfoWaitsForPackages(t *testing.T) {
+	pub, priv, _ := ed25519.GenerateKey(rand.Reader)
+	t.Cleanup(update.SetPublicKey(pub))
+	old := version
+	version = "0.3.0"
+	t.Cleanup(func() { version = old })
+
+	a := newTestApp(t, "A")
+	pkgs := releaseTo(t, a, priv, "0.3.1")
+	path, _, _ := a.upd.cache.Path("plan9")
+	os.Remove(path)
+	info := func() string {
+		r := httptest.NewRequest("GET", "http://x/peer/info", nil)
+		r.RemoteAddr = "192.168.1.30:50000"
+		w := httptest.NewRecorder()
+		a.routes().ServeHTTP(w, r)
+		var info peerInfo
+		if err := json.Unmarshal(w.Body.Bytes(), &info); err != nil {
+			t.Fatal(err)
+		}
+		return info.Update
+	}
+	if v := info(); v != "" || a.upd.unfinished() == nil {
+		t.Fatalf("另一个系统的安装包还没下载好，不应该对外说有 %q，并且要接着下", v)
+	}
+	os.WriteFile(path, pkgs["plan9"], 0o644)
+	if v := info(); v != "0.3.1" || a.upd.unfinished() != nil {
+		t.Fatalf("安装包都下载好后应该对外说有 0.3.1，现在是 %q", v)
+	}
+}
+
 // 同事给的安装包和签名的清单对不上（被改过），不能用；伪造签名的清单直接不理。
 func TestUpdateFromBadPeer(t *testing.T) {
 	pub, priv, _ := ed25519.GenerateKey(rand.Reader)

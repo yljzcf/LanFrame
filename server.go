@@ -162,7 +162,7 @@ func (a *App) peerInfo(w http.ResponseWriter, r *http.Request) {
 	c := a.config()
 	writeJSON(w, peerInfo{
 		App: appName, ID: a.me().ID, Name: c.Nickname, Port: a.port, Locked: c.TeamKey != "",
-		Version: version, Update: a.upd.cache.Version(),
+		Version: version, Update: a.upd.cache.Complete(),
 	})
 }
 

@@ -19,7 +19,6 @@ import (
 
 	"lanreview/internal/media"
 	"lanreview/internal/store"
-	"lanreview/internal/update"
 )
 
 const (
@@ -357,8 +356,8 @@ func (a *App) syncPeer(p Peer) {
 	}
 	a.peers.seen(info.ID, info.Name, p.Addr)
 	a.peers.update(p.ID, func(p *Peer) { p.Version, p.Update = info.Version, info.Update })
-	if update.Newer(info.Update, a.upd.known()) {
-		a.upd.kick(updateKick{}) // 对方有更新的版本，去要一份
+	if a.upd.wanted(info.Update) {
+		a.upd.kick(updateKick{}) // 对方有更新的版本（或者自己缓存里还没有的当前版本），去要一份
 	}
 	var videos []*media.VideoEntry
 	err = a.getJSON(ctx, "http://"+p.Addr+"/peer/videos", &videos)

@@ -82,14 +82,16 @@ func (u *updater) known() string {
 	return version
 }
 
+// wanted 判断某个版本的清单要不要放进缓存：比知道的版本新；或者正好是正在运行的版本、缓存里还没有，
+// 这样手动装了最新版的电脑也会把安装包下载下来，提供给同事。
+func (u *updater) wanted(v string) bool {
+	return update.Newer(v, u.known()) || v == version && u.cache.Version() == ""
+}
+
 // unfinished 返回还有安装包要接着下载的缓存清单，不用下载时返回 nil。
-// 缓存的版本比正在运行的新时要下；已经是这个版本了，只有之前就在中转的，才把缺的另一个系统的安装包补上。
 func (u *updater) unfinished() *update.Manifest {
 	_, m := u.cache.Manifest()
 	if m == nil || u.cache.Complete() != "" {
-		return nil
-	}
-	if !update.Newer(m.Version, version) && len(u.cache.Files()) == 0 {
 		return nil
 	}
 	return m
@@ -228,9 +230,9 @@ func (a *App) checkUpdate(k updateKick) {
 		}
 	}()
 
-	// 1. 同事那里有更新的版本：从缓存版本最新的那位开始问
+	// 1. 同事那里有更新的版本（或者自己缓存里还没有的当前版本）：从缓存版本最新的那位开始问
 	for _, p := range a.updatePeers("") {
-		if !update.Newer(p.Update, u.known()) {
+		if !u.wanted(p.Update) {
 			break
 		}
 		if u.skip(p.Addr, k.manual) {
@@ -269,11 +271,12 @@ func (a *App) checkUpdate(k updateKick) {
 	a.fetchPackages(k.manual)
 }
 
-// updatePeers 是在线、缓存里有新版本的同事，缓存版本新的在前。exact 不为空时只要缓存的正好是这个版本的。
+// updatePeers 是在线、缓存的版本不比自己旧的同事，缓存版本新的在前。exact 不为空时只要缓存的正好是这个版本的。
 func (a *App) updatePeers(exact string) []Peer {
 	var out []Peer
 	for _, p := range a.peers.Snapshot() {
-		if p.Online && p.ID != a.me().ID && update.Newer(p.Update, version) && (exact == "" || p.Update == exact) {
+		usable := update.Valid(p.Update) && !update.Newer(version, p.Update)
+		if p.Online && p.ID != a.me().ID && usable && (exact == "" || p.Update == exact) {
 			out = append(out, p)
 		}
 	}
@@ -301,13 +304,17 @@ func (a *App) fetchManifest(url, from string) error {
 	if err != nil {
 		return err
 	}
-	if !update.Newer(m.Version, a.upd.known()) {
+	if !a.upd.wanted(m.Version) {
 		return nil
 	}
 	if err := a.upd.cache.Put(raw, m); err != nil {
 		return err
 	}
-	log.Printf("更新：从 %s 得知新版本 %s", from, m.Version)
+	if update.Newer(m.Version, version) {
+		log.Printf("更新：从 %s 得知新版本 %s", from, m.Version)
+	} else {
+		log.Printf("更新：从 %s 拿到正在运行的版本 %s 的清单，下载安装包给同事用", from, m.Version)
+	}
 	return nil
 }
 
@@ -330,7 +337,7 @@ func (a *App) fetchPackages(manual bool) {
 		if _, _, have := u.cache.Path(goos); !ok || have {
 			continue
 		}
-		own := goos == runtime.GOOS
+		own := goos == runtime.GOOS && update.Newer(m.Version, version) // 只是给同事中转的，不在界面上显示进度和错误
 		var lastErr error
 		done := false
 		for _, src := range a.packageSources(m.Version, f.Name) {

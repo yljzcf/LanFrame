@@ -94,6 +94,48 @@ func TestUpdateFromPeer(t *testing.T) {
 	}
 }
 
+// 手动装了最新版、缓存里没有这个版本的电脑，也从同事那里拿到清单和两个安装包，好再提供给别人；
+// 这不算更新，界面上不提示、不显示进度和错误。比自己旧的版本不要。
+func TestRelayRunningVersion(t *testing.T) {
+	pub, priv, _ := ed25519.GenerateKey(rand.Reader)
+	t.Cleanup(update.SetPublicKey(pub))
+	old := version
+	version = "0.3.1"
+	t.Cleanup(func() { version = old })
+	t.Setenv("LANFRAME_UPDATE_BASE", "http://127.0.0.1:1")
+
+	a, b := newTestApp(t, "A"), newTestApp(t, "B")
+	pkgs := releaseTo(t, a, priv, "0.3.1")
+	srv := httptest.NewServer(a.routes())
+	defer srv.Close()
+	addr := srv.Listener.Addr().String()
+
+	b.peers.seen(a.me().ID, "A", addr)
+	b.syncPeer(b.peers.Snapshot()[0])
+	b.checkUpdate(updateKick{})
+	if v := b.upd.cache.Complete(); v != "0.3.1" {
+		t.Fatalf("B 应该把正在运行的 0.3.1 的安装包都下载下来，现在缓存里下载全的是 %q", v)
+	}
+	for goos, data := range pkgs {
+		path, _, _ := b.upd.cache.Path(goos)
+		if got, _ := os.ReadFile(path); string(got) != string(data) {
+			t.Errorf("B 缓存里 %s 的安装包不对", goos)
+		}
+	}
+	if st := b.updateState(); st.Ready || st.Latest != "" || st.Busy != "" || st.Error != "" {
+		t.Fatalf("已经是这个版本了，不应该提示更新：%+v", st)
+	}
+
+	version = "0.3.2"
+	c := newTestApp(t, "C")
+	c.peers.seen(a.me().ID, "A", addr)
+	c.syncPeer(c.peers.Snapshot()[0])
+	c.checkUpdate(updateKick{})
+	if v := c.upd.cache.Version(); v != "" {
+		t.Fatalf("比自己旧的 %s 不应该进缓存", v)
+	}
+}
+
 // 安装包还没下载全时，不对同事说有新版本，免得他们来要时还没下完；下载全之前每分钟接着下。
 func TestPeerInfoWaitsForPackages(t *testing.T) {
 	pub, priv, _ := ed25519.GenerateKey(rand.Reader)

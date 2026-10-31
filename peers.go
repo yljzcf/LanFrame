@@ -41,6 +41,7 @@ type Peer struct {
 	KeyMismatch bool                `json:"keyMismatch"`
 	Version     string              `json:"version,omitempty"` // 对方运行的版本
 	Update      string              `json:"update,omitempty"`  // 对方缓存里安装包都下载好、可以给别人的版本
+	Files       bool                `json:"files"`             // 对方开放了共享文件夹里的文件给同事下载
 	Videos      []*media.VideoEntry `json:"videos"`
 }
 
@@ -229,6 +230,7 @@ type peerInfo struct {
 	Locked  bool   `json:"locked"`            // 对方设了团队口令
 	Version string `json:"version,omitempty"` // 0.3.0 起才有
 	Update  string `json:"update,omitempty"`  // 缓存里安装包都下载好、可以给别人的版本，见 update.go
+	Files   bool   `json:"files,omitempty"`   // 开放了共享文件夹里的文件给同事下载，0.4.0 起才有，见 files.go
 }
 
 func (a *App) fetchInfo(ctx context.Context, addr string) (*peerInfo, error) {
@@ -355,7 +357,7 @@ func (a *App) syncPeer(p Peer) {
 		return
 	}
 	a.peers.seen(info.ID, info.Name, p.Addr)
-	a.peers.update(p.ID, func(p *Peer) { p.Version, p.Update = info.Version, info.Update })
+	a.peers.update(p.ID, func(p *Peer) { p.Version, p.Update, p.Files = info.Version, info.Update, info.Files })
 	if a.upd.wanted(info.Update) {
 		a.upd.kick(updateKick{}) // 对方有更新的版本（或者自己缓存里还没有的当前版本），去要一份
 	}
@@ -371,6 +373,10 @@ func (a *App) syncPeer(p Peer) {
 	})
 	if err != nil {
 		return
+	}
+	// 对方的视频有备份在本机的，名称和版本跟着对方最新的走（比如对方改了名、多了版本）
+	if bk := a.getBackups(); bk != nil {
+		bk.Refresh(info.ID, info.Name, videos)
 	}
 	st := a.getStore()
 	if st == nil {

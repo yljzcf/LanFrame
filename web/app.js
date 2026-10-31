@@ -65,11 +65,12 @@ async function refresh() {
   $('#share-error').hidden = !s.shareError;
   if ($('#share-error-text').textContent !== (s.shareError || '')) $('#share-error-text').textContent = s.shareError || '';
   renderVideos();
+  renderDownloads();
   tryOpenLink();
   if (cur) {
     // 版本信息可能变了（比如刚确认了新版本），同步到当前视频
     const fresh = findVideo(cur.owner, cur.fp).v;
-    if (fresh) Object.assign(cur, { name: fresh.name, title: fresh.title, group: fresh.group, version: fresh.version, versions: fresh.versions, missing: fresh.missing, suggest: fresh.suggest });
+    if (fresh) Object.assign(cur, { name: fresh.name, title: fresh.title, group: fresh.group, version: fresh.version, versions: fresh.versions, missing: fresh.missing, suggest: fresh.suggest, holders: fresh.holders, backup: fresh.backup, local: fresh.local });
     renderTitle();
     renderVersionBar();
     if (videoOffline && sourceOnline(cur.fp)) reloadVideo();
@@ -77,9 +78,11 @@ async function refresh() {
   if (cur && s.annVersion !== annVersion) await loadAnns();
 }
 
+// sourceOnline 判断现在能不能播放：自己有、原主人在线，或者有人（包括本机）存着备份在线
 function sourceOnline(fp) {
-  if ((S.mine || []).some((v) => v.fp === fp && !v.missing)) return true;
-  return (S.peers || []).some((p) => p.online && (p.videos || []).some((v) => v.fp === fp && !v.missing));
+  const ok = (v, online) => v.fp === fp && ((online && !v.missing) || v.holders?.length);
+  if ((S.mine || []).some((v) => ok(v, true))) return true;
+  return (S.peers || []).some((p) => (p.videos || []).some((v) => ok(v, p.online)));
 }
 
 // ---------- 视频列表 ----------
@@ -108,34 +111,49 @@ function versionedName(v) {
   return /[\s_\-.]v\d+$/i.test(base) ? base : `${base}_${verLabel(v.version)}`;
 }
 
-// 最新版本是主行，旧版本缩进列在下面
+// 最新版本是主行，旧版本缩进列在下面。原主人那边已经没有这个文件、显示的是备份时，名字下面标"备份版"
 function videoRow(v, ownerId, sub) {
   const n = S.counts?.[v.fp] || 0;
   const active = cur && cur.fp === v.fp && cur.owner === ownerId;
   const path = v.dir && v.dir !== '.' ? `${v.dir}/${v.name}` : v.name;
+  const holders = v.holders?.length ? `，备份在${v.holders.join('、')}` : '';
   return `<div class="video-item ${sub ? 'sub' : ''} ${active ? 'active' : ''} ${v.missing ? 'missing' : ''}" data-owner="${esc(ownerId)}" data-fp="${v.fp}">
-    <span class="name" title="本地文件：${esc(path)}">${esc(versionedName(v))}</span>
+    <span class="name-col"><span class="name" title="本地文件：${esc(path)}${esc(holders)}">${esc(versionedName(v))}</span>
+      ${v.backup ? `<span class="sub-note" title="原主人那边已经没有这个文件，这是同事存着的备份${esc(holders)}">备份版</span>` : ''}</span>
     ${v.missing ? '<span class="ver">文件已不在</span>' : ''}
     ${v.suggest ? '<span class="tag">新版本？</span>' : ''}
     ${n ? `<span class="badge" title="批注数">${n}</span>` : ''}</div>
-    ${active ? `<div class="video-tools">
+    ${active ? `<div class="video-tools">${backupButton(v, ownerId)}
       <button data-vtool="share" title="复制一个直接打开这个视频的链接">分享视频</button>
       <button data-vtool="export" title="把这个版本的所有批注导出成一个带截图的网页表格">导出批注</button></div>` : ''}`;
 }
 
+// backupButton 是同事的视频下面的"备份视频"：拿一份存到本机共享文件夹的"备份"里，原主人不在时别人也能从你这里看。
+// 自己的视频没有这个按钮；已经备份过、正在备份时按钮变灰。
+function backupButton(v, ownerId) {
+  if (ownerId === S.me.id || v.missing) return '';
+  if (v.local) return '<button disabled title="已经备份在你共享文件夹的“备份”里">已备份</button>';
+  if ((S.downloads || []).some((d) => d.fp === v.fp && dlActive(d))) return '<button disabled title="右上角“下载”里能看进度">备份中…</button>';
+  return '<button data-vtool="backup" title="拿一份原片存到你共享文件夹的“备份”里，原主人不在时同事也能从你这里看，批注是同一套">备份视频</button>';
+}
+
 function renderVideos() {
   const groups = [{ id: S.me.id, name: '我的视频', online: true, videos: S.mine || [], mine: true }];
-  for (const p of S.peers || []) groups.push({ id: p.id, name: p.name, online: p.online, videos: p.videos || [], keyMismatch: p.keyMismatch });
-  const key = JSON.stringify([groups, S.counts, cur?.fp, cur?.owner]);
+  for (const p of S.peers || []) groups.push({ id: p.id, name: p.name, online: p.online, videos: p.videos || [], keyMismatch: p.keyMismatch, files: p.files });
+  const backing = (S.downloads || []).filter((d) => d.fp && dlActive(d)).map((d) => d.fp); // "备份中…"的按钮跟着变
+  const key = JSON.stringify([groups, S.counts, cur?.fp, cur?.owner, backing]);
   if (key === lastListKey) return;
   lastListKey = key;
   let html = groups.map((g) => {
     let items = groupVersions(g.videos).map((vs) => vs.map((v, i) => videoRow(v, g.id, i > 0)).join('')).join('');
     if (!items) {
-      const why = g.mine ? '共享文件夹里还没有视频' : g.keyMismatch ? '团队口令和你的不一样，看不到对方的视频' : '没有分享视频';
+      const why = g.mine ? '"分享"里还没有视频' : g.keyMismatch ? '团队口令和你的不一样，看不到对方的视频' : '没有分享视频';
       items = `<div class="empty-group">${why}</div>`;
     }
-    return `<div class="group-head"><span class="dot ${g.online ? 'on' : ''}"></span>${esc(g.name)}${!g.mine && !g.online ? '（离线）' : ''}</div>${items}`;
+    const files = g.mine ? '<button class="link files-btn" data-open-share title="打开共享文件夹里的“分享”，要给同事看的视频和文件放在这里">打开文件夹</button>'
+      : g.online && g.files && !g.keyMismatch
+        ? `<button class="link files-btn" data-files="${esc(g.id)}" title="浏览和下载 ${esc(g.name)} 共享文件夹里的文件">文件</button>` : '';
+    return `<div class="group-head"><span class="dot ${g.online ? 'on' : ''}"></span>${esc(g.name)}${!g.mine && !g.online ? '（离线）' : ''}${files}</div>${items}`;
   }).join('');
   if (!(S.peers || []).length) {
     html += '<div class="empty-group">还没发现同事的电脑。确认对方已经打开程序；过一会儿还没出现，点右上角"添加电脑"输入对方 IP。</div>';
@@ -144,10 +162,14 @@ function renderVideos() {
 }
 
 $('#video-list').addEventListener('click', (e) => {
-  // 当前视频名下面的"分享视频""导出批注"
+  const files = e.target.closest('[data-files]')?.dataset.files;
+  if (files) { openFiles(files, ''); return; }
+  if (e.target.closest('[data-open-share]')) { post('/api/open-share').catch((err) => alert(err.message)); return; }
+  // 当前视频名下面的"备份视频""分享视频""导出批注"
   const tool = e.target.closest('[data-vtool]')?.dataset.vtool;
   if (tool === 'share') { shareVideo(); return; }
   if (tool === 'export') { exportAnnotations(); return; }
+  if (tool === 'backup') { backupVideo(); return; }
   const el = e.target.closest('.video-item');
   if (el) selectVideo(el.dataset.owner, el.dataset.fp);
 });
@@ -208,7 +230,8 @@ function renderTitle() {
   const mine = cur.owner === S.me.id;
   const title = `<span class="vname" title="${esc(versionedName(cur))}">${esc(versionedName(cur))}</span>`
     + (mine ? '<button class="link" data-ver="rename">改名</button><button class="link" data-ver="adjust">调整版本</button>' : '');
-  const sub = [cur.name, `${cur.ownerName} 分享`, fmtSize(cur.size)];
+  const sub = [cur.name, `${cur.ownerName} 分享${cur.backup ? '（备份版）' : ''}`, fmtSize(cur.size)];
+  if (cur.holders?.length) sub.push(`备份在${cur.holders.join('、')}`);
   if (cur.versions > 1) sub.push(`共 ${cur.versions} 个版本`);
   if ($('#video-title').innerHTML !== title) $('#video-title').innerHTML = title;
   $('#video-sub').textContent = sub.join(' · ');
@@ -1333,6 +1356,7 @@ $('#update-actions').onclick = updateAction;
 function openModal(kind, html) {
   modalKind = kind;
   $('#modal-box').onclick = null;
+  $('#modal-box').classList.toggle('wide', kind === 'files' || kind === 'downloads');
   $('#modal-box').innerHTML = html;
   $('#modal').hidden = false;
 }
@@ -1365,15 +1389,43 @@ $('#modal').addEventListener('click', (e) => {
   if (e.target.id === 'modal' && modalKind !== 'setup-first') closeModal();
 });
 
+// pickerHTML 和 mountPicker：网页里的文件夹选择器。浏览器拿不到本地路径，由程序列出目录（/api/fs）。
+// mountPicker 返回的对象里，path 是当前选中的文件夹，roots 是可选的根目录（个人文件夹、各个磁盘）。
+const pickerHTML = (id) => `<div class="picker" id="${id}"><div class="path"></div><div class="roots"></div><div class="dirs"></div></div>`;
+function mountPicker(id, start, errEl) {
+  const el = $('#' + id);
+  const st = { path: start || '', roots: [] };
+  async function browse(p, fallback) {
+    try {
+      const r = await api(`/api/fs?path=${encodeURIComponent(p || '')}`);
+      st.path = r.path;
+      st.roots = r.roots;
+      st.movable = r.movable;
+      errEl.textContent = '';
+      el.querySelector('.path').textContent = `当前选中：${r.path}`;
+      el.querySelector('.roots').innerHTML = r.roots.map((x) => `<button data-p="${esc(x.path)}">${esc(x.label)}</button>`).join('');
+      el.querySelector('.dirs').innerHTML = (r.parent ? `<div class="dir" data-p="${esc(r.parent)}">⬆ 上一级</div>` : '')
+        + (r.dirs.map((d) => `<div class="dir" data-p="${esc(d.path)}">📁 ${esc(d.name)}</div>`).join('') || '<div class="dir muted">（没有子文件夹）</div>');
+    } catch (e) {
+      if (fallback) browse('');
+      else errEl.textContent = e.message;
+    }
+  }
+  el.onclick = (e) => {
+    const t = e.target.closest('[data-p]');
+    if (t) browse(t.dataset.p);
+  };
+  browse(st.path, true); // 起点打不开时（比如还没建的下载文件夹）从个人文件夹开始
+  return st;
+}
+
 function openSetup(first) {
-  let path = S?.shareDir || '';
-  let roots = [];
   openModal(first ? 'setup-first' : 'setup', `
     <h2>${first ? '欢迎使用局域网审片' : '设置'}</h2>
     ${first ? '<p class="muted">视频始终留在你自己的电脑上，同事通过局域网直接播放原片、写批注。开始前先做两件事：</p>' : ''}
     <div class="field"><label>1. 你的昵称（同事会看到）</label><input type="text" id="su-name" maxlength="20" value="${esc(S?.me?.name || '')}"></div>
-    <div class="field"><label>2. 共享文件夹：放要给同事看的视频，批注也会存在它里面的"批注同步(别删)"文件夹。点文件夹进入，当前所在的就是要共享的文件夹。</label>
-      <div class="picker"><div class="path" id="su-path"></div><div class="roots" id="su-roots"></div><div class="dirs" id="su-dirs"></div></div>
+    <div class="field"><label>2. 共享文件夹：程序会在里面建三个子文件夹——"分享"放要给同事看的视频和文件；"备份"放从同事那里拿来的东西（视频成为备份，原主人不在时同事也能从你这里看）；"批注"放所有批注，电脑之间自动同步，不要手动删改。文件夹里原有的东西会挪进"分享"。点文件夹进入，当前所在的就是要共享的文件夹。</label>
+      ${pickerHTML('su-picker')}
     </div>
     <div class="field"><label>3. 团队口令（可选）：设置后，只有填了相同口令的电脑能看到你的视频和批注。团队里每个人都要填一样的；不填就是局域网里谁都能看。</label>
       <input type="text" id="su-key" maxlength="64" placeholder="不填则不设口令" value="${esc(S?.teamKey || '')}"></div>
@@ -1394,27 +1446,16 @@ function openSetup(first) {
       <label class="toggle"><input type="checkbox" data-toggle="silentStart" ${S.toggles?.silentStart ? 'checked' : ''} ${S.toggles?.autostart ? '' : 'disabled'}>
         <span>开机后静默运行<br><span class="muted">开机启动时不弹出浏览器，只在托盘里待命</span></span></label>
     </div>
+    <div class="section">
+      <div class="muted" style="margin-bottom:8px">从同事电脑拿文件</div>
+      <label class="toggle"><input type="checkbox" data-toggle="fileShare" ${S.fileShare ? 'checked' : ''}>
+        <span>允许同事下载我共享文件夹里的所有文件<br><span class="muted">同事在左边点你名字旁的"文件"就能浏览和下载"分享"和"备份"，只能拿，不能改、不能删。"批注"和隐藏文件除外。关掉后同事仍然能看你的视频</span></span></label>
+      <p class="muted">从同事那里拿的东西存在共享文件夹的"备份"里，按来源分文件夹。</p>
+    </div>
     <div class="section row"><span class="muted">退出后，同事就看不了你的视频了。</span><span class="spacer"></span><button class="danger" id="su-quit">退出程序</button></div>`}
     <div class="modal-actions"><span class="error" id="su-err"></span>
       ${first ? '' : '<button id="su-cancel">取消</button>'}<button class="primary" id="su-ok">${first ? '开始使用' : '保存'}</button></div>`);
-  async function browse(p) {
-    try {
-      const r = await api(`/api/fs?path=${encodeURIComponent(p || '')}`);
-      path = r.path;
-      roots = r.roots;
-      $('#su-err').textContent = '';
-      $('#su-path').textContent = `当前选中：${r.path}`;
-      $('#su-roots').innerHTML = r.roots.map((x) => `<button data-p="${esc(x.path)}">${esc(x.label)}</button>`).join('');
-      $('#su-dirs').innerHTML = (r.parent ? `<div class="dir" data-p="${esc(r.parent)}">⬆ 上一级</div>` : '')
-        + (r.dirs.map((d) => `<div class="dir" data-p="${esc(d.path)}">📁 ${esc(d.name)}</div>`).join('') || '<div class="dir muted">（没有子文件夹）</div>');
-    } catch (e) {
-      $('#su-err').textContent = e.message;
-    }
-  }
-  $('#modal-box').onclick = (e) => {
-    const t = e.target.closest('[data-p]');
-    if (t) browse(t.dataset.p);
-  };
+  const share = mountPicker('su-picker', S?.shareDir || '', $('#su-err'));
   $('#su-cancel')?.addEventListener('click', closeModal);
   $('#su-update')?.addEventListener('click', updateAction);
   renderUpdateSettings();
@@ -1455,9 +1496,11 @@ function openSetup(first) {
   $('#su-ok').addEventListener('click', async () => {
     const nickname = $('#su-name').value.trim();
     if (!nickname) { $('#su-err').textContent = '先填一个昵称'; return; }
-    if (roots.some((x) => x.path === path) && !confirm('共享整个个人文件夹或整个磁盘，会扫描里面所有视频。建议新建一个专门的文件夹。仍然继续吗？')) return;
+    if (share.roots.some((x) => x.path === share.path) && !confirm('共享整个个人文件夹或整个磁盘，会扫描里面所有视频，里面的所有文件同事也都能下载。建议新建一个专门的文件夹。仍然继续吗？')) return;
+    if (share.path !== S?.shareDir && share.movable > 0
+      && !confirm(`这个文件夹里原有的 ${share.movable} 项会挪进新建的"分享"子文件夹。剪辑软件工程里引用了这些文件的，会显示素材离线，需要重新链接。继续吗？`)) return;
     try {
-      await post('/api/setup', { nickname, shareDir: path, teamKey: $('#su-key').value.trim() });
+      await post('/api/setup', { nickname, shareDir: share.path, teamKey: $('#su-key').value.trim() });
       closeModal();
       lastListKey = '';
       await refresh();
@@ -1466,7 +1509,6 @@ function openSetup(first) {
       $('#su-err').textContent = e.message;
     }
   });
-  browse(path);
 }
 
 function openAddPeer() {
@@ -1510,7 +1552,7 @@ function openHelp() {
     <h3>批注的规则</h3>
     <ul>
       <li>自己写的批注可以修改（保留历史）和删除，删除会同步清掉所有电脑上的这条批注。</li>
-      <li>批注存在每个人共享文件夹里的"批注同步(别删)"文件夹，电脑之间自动同步，请不要手动删改。</li>
+      <li>共享文件夹里有三个子文件夹：要给同事看的视频和文件放进"分享"；"备份"放从同事那里拿的东西；"批注"放所有批注，电脑之间自动同步，请不要手动删改。</li>
     </ul>
     <h3>让同事加入</h3>
     <ol>
@@ -1522,6 +1564,14 @@ function openHelp() {
       <li>重新导出的文件如果和之前的视频名字相近（比如同名覆盖、_v2、(1)），会问你是不是新版本。确认后列在同一个视频下面，旧版本的批注保留。</li>
       <li>自己的视频可以点"调整版本"，手动归到别的视频下面或单独拆出来。</li>
       <li>自己的视频可以点"改名"起一个视频名称（比如 LAX43_EP03），还可以顺便把电脑上的文件改成"名称_v版本号"（比如 LAX43_EP03_v02.mp4）。改名不影响批注。</li>
+    </ul>
+    <h3>从同事电脑拿文件</h3>
+    <ul>
+      <li>左边同事名字旁点"文件"，能浏览他共享文件夹里的所有文件，勾选后点"下载"，整个文件夹也能一次拿走。对方不用在电脑前操作。</li>
+      <li>下载在后台进行，关掉这个网页也会继续；断网、对方离线或者程序重启后，从断点接着下。右上角"下载"里能看进度。</li>
+      <li>拿来的东西存在你共享文件夹的"备份"里，按来源分文件夹。拿来的视频成为原主人视频的备份：列表里仍然在原主人名下，不算你的视频；原主人不在时，同事能从你这里播放原片，批注也是同一套。原主人已经删了的，列表里显示备份版，文件名下面标"备份版"。</li>
+      <li>只想备份某个视频：选中同事的视频，名字下面点"备份视频"。</li>
+      <li>同事也能这样拿你共享文件夹里的文件（只能拿，不能改、不能删）；不想开放的话在"设置"里关掉。</li>
     </ul>
     <h3>注意</h3>
     <ul>
@@ -1536,6 +1586,213 @@ function openHelp() {
     <div class="modal-actions"><button class="primary" id="help-ok">知道了</button></div>`);
   $('#help-ok').onclick = closeModal;
 }
+
+// ---------- 从同事电脑拿文件 ----------
+// 同事共享文件夹里的文件都能浏览和下载（只读）。下载由程序在后台做：网页关了也继续，断了从断点接着下。
+
+let fileSel = null; // 文件窗口：{ peer, path, checked: 路径 -> 条目 }，在不同文件夹里勾的都算
+
+const fmtBytes = (n) => (n >= 1 << 30 ? `${(n / (1 << 30)).toFixed(1)} GB` : n >= 1 << 20 ? `${(n / (1 << 20)).toFixed(1)} MB` : n >= 1024 ? `${Math.round(n / 1024)} KB` : `${n} B`);
+
+async function openFiles(peerId, dir) {
+  const peer = (S.peers || []).find((p) => p.id === peerId);
+  if (!peer) return;
+  if (!fileSel || fileSel.peer !== peerId || modalKind !== 'files') fileSel = { peer: peerId, checked: new Map() };
+  fileSel.path = dir;
+  if (modalKind !== 'files') {
+    openModal('files', `<h2>${esc(peer.name)} 的文件</h2>
+      <div class="crumbs" id="fl-crumbs"></div>
+      <div class="file-list" id="fl-list"></div>
+      <p class="muted">存到你共享文件夹的"备份/${esc(peer.name)}"里。视频会成为备份，${esc(peer.name)}不在时同事也能从你这里看。</p>
+      <div class="modal-actions"><span class="error" id="fl-err"></span><button id="fl-close">关闭</button><button class="primary" id="fl-ok" disabled>下载</button></div>`);
+    $('#fl-close').onclick = closeModal;
+    $('#fl-ok').onclick = startDownload;
+    $('#fl-crumbs').onclick = (e) => {
+      const c = e.target.closest('[data-crumb]');
+      if (c) openFiles(fileSel.peer, c.dataset.crumb);
+    };
+    $('#fl-list').onclick = (e) => {
+      const row = e.target.closest('[data-path]');
+      if (!row) return;
+      const entry = fileSel.entries.find((x) => x.path === row.dataset.path);
+      // 点文件夹的名字进入；点勾选框或者文件的名字是勾选
+      if (entry.dir && !e.target.closest('input')) { openFiles(fileSel.peer, entry.path); return; }
+      if (!e.target.closest('input')) row.querySelector('input').checked = !row.querySelector('input').checked;
+      if (row.querySelector('input').checked) fileSel.checked.set(entry.path, entry);
+      else fileSel.checked.delete(entry.path);
+      renderFileSel();
+    };
+  }
+  const parts = dir ? dir.split('/') : [];
+  $('#fl-crumbs').innerHTML = [`<span class="crumb" data-crumb="">共享文件夹</span>`,
+    ...parts.map((name, i) => `<span class="crumb" data-crumb="${esc(parts.slice(0, i + 1).join('/'))}">${esc(name)}</span>`)].join('<span class="muted"> / </span>');
+  $('#fl-list').innerHTML = '<div class="muted pad">正在读取…</div>';
+  $('#fl-err').textContent = '';
+  try {
+    fileSel.entries = await api(`/api/peer-files?peer=${encodeURIComponent(peerId)}&path=${encodeURIComponent(dir)}`);
+  } catch (e) {
+    fileSel.entries = [];
+    $('#fl-list').innerHTML = '';
+    $('#fl-err').textContent = e.message;
+    return;
+  }
+  if (modalKind !== 'files' || fileSel.path !== dir) return; // 读的时候已经关了窗口或者换了文件夹
+  $('#fl-list').innerHTML = fileSel.entries.map((f) => `<div class="file-row ${f.dir ? 'is-dir' : ''}" data-path="${esc(f.path)}">
+      <input type="checkbox" ${fileSel.checked.has(f.path) ? 'checked' : ''}>
+      <span class="fname" title="${f.dir ? '点名字打开这个文件夹' : esc(f.name)}">${f.dir ? '📁' : '📄'} ${esc(f.name)}</span>
+      <span class="muted fsize">${f.dir ? '' : fmtBytes(f.size)}</span>
+      <span class="muted ftime">${fmtTime(f.mtime)}</span></div>`).join('')
+    || '<div class="muted pad">这个文件夹是空的</div>';
+  renderFileSel();
+}
+
+function renderFileSel() {
+  const items = [...fileSel.checked.values()];
+  const dirs = items.filter((f) => f.dir).length;
+  const bytes = items.reduce((n, f) => n + (f.dir ? 0 : f.size), 0);
+  $('#fl-ok').disabled = !items.length;
+  $('#fl-ok').textContent = !items.length ? '下载'
+    : `下载 ${items.length} 项${dirs ? `（含 ${dirs} 个文件夹）` : `（${fmtBytes(bytes)}）`}`;
+}
+
+async function startDownload() {
+  const paths = [...fileSel.checked.keys()];
+  $('#fl-ok').disabled = true;
+  $('#fl-err').textContent = '正在准备…';
+  try {
+    await post('/api/downloads', { peer: fileSel.peer, paths });
+  } catch (e) {
+    $('#fl-err').textContent = e.message;
+    renderFileSel();
+    return;
+  }
+  closeModal();
+  await refresh();
+  toast(`开始下载 ${paths.length} 项，右上角"下载"里能看进度`);
+}
+
+const dlStates = {
+  queued: '排队中', running: '下载中', waiting: '等对方上线，上线后自动接着下', paused: '服务已暂停，恢复后接着下',
+  retrying: '网络不稳，正在重试', done: '已下载', partial: '部分文件没下载成功', failed: '下载失败', canceled: '已取消',
+};
+const dlActive = (d) => ['queued', 'running', 'waiting', 'paused', 'retrying'].includes(d.state);
+
+function fmtLeft(sec) {
+  if (sec < 60) return `${Math.ceil(sec)} 秒`;
+  if (sec < 3600) return `${Math.ceil(sec / 60)} 分钟`;
+  return `${(sec / 3600).toFixed(1)} 小时`;
+}
+
+let dlSeen = null; // 已经提示过"下载完了"的下载
+
+// renderDownloads 在每次轮询时更新：顶栏"下载"上的数字、下载完的提示、开着的下载列表、第一次提示开放文件。
+function renderDownloads() {
+  const list = S.downloads || [];
+  const active = list.filter(dlActive).length;
+  $('#dl-badge').hidden = !active;
+  $('#dl-badge').textContent = active;
+  // 刚打开网页时已经下完的不再提示
+  if (dlSeen === null) dlSeen = new Set(list.filter((d) => d.doneAt).map((d) => d.id));
+  const done = list.filter((d) => d.doneAt && !dlSeen.has(d.id));
+  if (done.length) {
+    done.forEach((d) => dlSeen.add(d.id));
+    const fresh = done.find((d) => d.state !== 'done') || done[0]; // 有没下载成功的先说它
+    const ok = fresh.state === 'done';
+    const more = done.length > 1 ? `等 ${done.length} 项` : '';
+    $('#dl-done-text').textContent = ok ? `已从 ${fresh.peerName} 拿到「${fresh.name}」${more}` : `从 ${fresh.peerName} 拿「${fresh.name}」${dlStates[fresh.state]}`;
+    $('#dl-done-actions').innerHTML = `<button class="primary" data-dl-act="reveal" data-id="${esc(fresh.id)}">${ok ? '打开所在文件夹' : '看看'}</button><button data-dl-act="hide">关闭</button>`;
+    $('#dl-done-bar').hidden = false;
+  }
+  $('#fileshare-bar').hidden = !S.fileShareNotice;
+  if (S.fileShareNotice) {
+    const text = '共享文件夹分成了三个子文件夹："分享"放给同事看的视频和文件，"备份"放从同事那里拿的东西，"批注"放批注（不要手动删改）。'
+      + (S.layoutNote || '') + (S.fileShare ? '共享文件夹里的文件同事都能浏览和下载，只能拿，不能改、不能删；不想开放可以在"设置"里关掉。' : '');
+    if ($('#fileshare-text').textContent !== text) $('#fileshare-text').textContent = text;
+  }
+  if (modalKind === 'downloads') renderDownloadList();
+}
+
+function openDownloads() {
+  openModal('downloads', `<h2>下载</h2>
+    <div class="row"><span class="muted">存在共享文件夹的"备份"里，按来源分文件夹</span><span class="spacer"></span><button data-dl-act="open-dir">打开文件夹</button></div>
+    <div id="dl-list" class="dl-list"></div>
+    <div class="modal-actions"><span class="error" id="dl-err"></span><button data-dl-act="clear">清除已结束的</button><button class="primary" id="dl-close">关闭</button></div>`);
+  $('#dl-close').onclick = closeModal;
+  $('#modal-box').onclick = dlAction;
+  renderDownloadList();
+}
+
+function renderDownloadList() {
+  const list = S.downloads || [];
+  const html = list.map((d) => {
+    const pct = d.size ? Math.min(100, (d.got / d.size) * 100) : (d.state === 'done' ? 100 : 0);
+    const info = [`${fmtBytes(d.got)} / ${fmtBytes(d.size)}`];
+    if (d.dir) info.push(`${d.done} / ${d.files} 个文件`);
+    if (d.state === 'running' && d.speed > 0) info.push(`${fmtBytes(Math.round(d.speed))}/秒`, `还要 ${fmtLeft((d.size - d.got) / d.speed)}`);
+    const btns = [];
+    if (dlActive(d)) btns.push(`<button data-dl-act="cancel" data-id="${esc(d.id)}">取消</button>`);
+    if (['failed', 'partial', 'canceled'].includes(d.state)) btns.push(`<button data-dl-act="retry" data-id="${esc(d.id)}">重试</button>`);
+    if (d.state !== 'canceled') btns.push(`<button data-dl-act="reveal" data-id="${esc(d.id)}">打开所在文件夹</button>`);
+    const errs = [d.err, ...(d.failed || [])].filter(Boolean);
+    return `<div class="dl-item ${d.state}">
+      <div class="row"><b class="dl-name">${d.dir ? '📁' : '📄'} ${esc(d.name)}</b><span class="muted">来自 ${esc(d.peerName)}</span><span class="spacer"></span><span class="dl-state">${dlStates[d.state] || d.state}</span></div>
+      <div class="progress"><div style="width:${pct.toFixed(1)}%"></div></div>
+      <div class="row"><span class="muted">${info.join(' · ')}</span><span class="spacer"></span>${btns.join('')}</div>
+      ${errs.map((e) => `<div class="error dl-err">${esc(e)}</div>`).join('')}
+    </div>`;
+  }).join('') || '<div class="muted pad">还没有下载过文件。在左边同事名字旁点"文件"，就能浏览和下载他共享文件夹里的文件。</div>';
+  const box = $('#dl-list');
+  if (box && box.dataset.html !== html) {
+    box.innerHTML = html;
+    box.dataset.html = html;
+  }
+}
+
+async function dlAction(e) {
+  const btn = e.target.closest('[data-dl-act]');
+  if (!btn) return;
+  const act = btn.dataset.dlAct;
+  if (act === 'hide') { $('#dl-done-bar').hidden = true; return; }
+  try {
+    if (act === 'open-dir') await post('/api/downloads/open');
+    else if (act === 'clear') await post('/api/downloads/clear');
+    else await post(`/api/downloads/${encodeURIComponent(btn.dataset.id)}/${act}`);
+    if (act === 'reveal' && btn.closest('#dl-done-bar')) $('#dl-done-bar').hidden = true;
+    await refresh();
+  } catch (err) {
+    if ($('#dl-err')) $('#dl-err').textContent = err.message;
+    else alert(err.message);
+  }
+}
+$('#dl-done-actions').onclick = dlAction;
+
+async function backupVideo() {
+  if (!cur) return;
+  try {
+    await post('/api/backup', { owner: cur.owner, fp: cur.fp });
+  } catch (e) {
+    alert(e.message);
+    return;
+  }
+  lastListKey = '';
+  await refresh();
+  toast(`开始备份，存到你共享文件夹的"备份/${cur.ownerName}"里，右上角"下载"里能看进度`);
+}
+$('#btn-downloads').onclick = () => S?.configured && openDownloads();
+
+// 从 0.3.x 更新上来的用户，提示一次共享文件夹里的文件同事都能下载了
+$('#fileshare-actions').onclick = async (e) => {
+  const act = e.target.closest('[data-act]')?.dataset.act;
+  if (!act) return;
+  try {
+    await post('/api/toggle', { name: 'fileShareNotified', on: true });
+    await refresh();
+  } catch (err) {
+    alert(err.message);
+    return;
+  }
+  if (act === 'settings') openSetup(false);
+};
 
 $('#btn-add-peer').onclick = () => S?.configured && openAddPeer();
 $('#btn-help').onclick = () => S?.configured && openHelp();

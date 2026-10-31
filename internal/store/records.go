@@ -16,8 +16,6 @@ import (
 	"time"
 )
 
-const SyncDirName = "批注同步(别删)"
-
 var (
 	reRecordID  = regexp.MustCompile(`^[0-9a-f]{32}$`)
 	reImageName = regexp.MustCompile(`^[0-9a-f]{64}\.(png|jpg|gif|webp)$`)
@@ -118,7 +116,7 @@ func Open(shareDir string) (*Store, error) {
 	} else if !st.IsDir() {
 		return nil, fs.ErrNotExist
 	}
-	dir := filepath.Join(shareDir, SyncDirName)
+	dir := syncDirOf(shareDir)
 	for _, sub := range []string{"records", "images"} {
 		if err := os.MkdirAll(filepath.Join(dir, sub), 0o755); err != nil {
 			return nil, err

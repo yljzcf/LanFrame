@@ -13,7 +13,7 @@ import (
 	"lanreview/internal/store"
 )
 
-// 版本组只记在视频分享者自己的电脑上（批注同步文件夹里的 versions.json，不参与同步），
+// 版本组只记在视频分享者自己的电脑上（批注文件夹里的 versions.json，不参与同步），
 // 随视频列表一起发给同事。一个版本 = 一个指纹，每个版本的批注各自独立。
 
 type VersionGroup struct {
@@ -31,6 +31,13 @@ type VideoEntry struct {
 	Versions int    `json:"versions"`
 	Missing  bool   `json:"missing,omitempty"` // 文件已经不在了，只剩批注
 	Suggest  string `json:"suggest,omitempty"` // 只给本机：疑似哪个视频的新版本
+	// 备份（见 backups.go）：这是 Origin 的视频，存在列出它的这台电脑上。0.3.x 不认这两个字段，当成这台电脑自己的视频
+	Origin     string `json:"origin,omitempty"`
+	OriginName string `json:"originName,omitempty"`
+	// 下面三个只给本机网页（见 backups.go 的 videoView）
+	Holders []string `json:"holders,omitempty"` // 现在在线、存着这个视频的备份的人，原主人不在时从他们那里播放
+	Backup  bool     `json:"backup,omitempty"`  // 原主人那边已经没有这个文件（或者从没见过原主人），列表里显示的是备份版
+	Local   bool     `json:"local,omitempty"`   // 本机存着这个视频的备份
 }
 
 type Versions struct {

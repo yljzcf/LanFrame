@@ -12,6 +12,7 @@
   <div class="brand">局域网审片</div>
   <div id="me"></div>
   <div class="spacer"></div>
+  <button id="btn-downloads" title="从同事那里拿的文件">下载 <span id="dl-badge" class="badge" hidden></span></button>
   <button id="btn-add-peer">添加电脑</button>
   <button id="btn-help">使用说明</button>
   <button id="btn-settings">设置</button>
@@ -27,6 +28,14 @@
 <div id="update-bar" hidden>
   <span id="update-text"></span>
   <span class="row" id="update-actions"></span>
+</div>
+<div id="fileshare-bar" hidden>
+  <span id="fileshare-text"></span>
+  <span class="row" id="fileshare-actions"><button class="primary" data-act="ok">知道了</button><button data-act="settings">去设置</button></span>
+</div>
+<div id="dl-done-bar" hidden>
+  <span id="dl-done-text"></span>
+  <span class="row" id="dl-done-actions"></span>
 </div>
 
 <main id="main">

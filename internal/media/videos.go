@@ -83,7 +83,8 @@ func (l *VideoLib) Scan(root string) {
 		}
 		name := d.Name()
 		if d.IsDir() {
-			if path != root && (name == store.SyncDirName || strings.HasPrefix(name, ".")) {
+			// 批注文件夹只在共享文件夹根目录下；别的地方叫"批注"的是用户自己的文件夹
+			if path != root && ((filepath.Dir(path) == root && store.IsSyncDir(name)) || strings.HasPrefix(name, ".")) {
 				return filepath.SkipDir
 			}
 			return nil
@@ -101,7 +102,7 @@ func (l *VideoLib) Scan(root string) {
 			if !l.settled(path, info, nextPending) {
 				return nil
 			}
-			fp, err := fingerprint(path, info.Size())
+			fp, err := Fingerprint(path, info.Size())
 			if err != nil {
 				log.Printf("算指纹失败 %s：%v", path, err)
 				return nil
@@ -152,8 +153,8 @@ func (l *VideoLib) Get(fp string) *VideoInfo {
 	return l.byFP[fp]
 }
 
-// fingerprint 用"文件大小 + 开头、中间、结尾各 4MB"算 SHA-256，大文件也几乎瞬间算完。
-func fingerprint(path string, size int64) (string, error) {
+// Fingerprint 用"文件大小 + 开头、中间、结尾各 4MB"算 SHA-256，大文件也几乎瞬间算完。
+func Fingerprint(path string, size int64) (string, error) {
 	const chunk = 4 << 20
 	f, err := os.Open(path)
 	if err != nil {

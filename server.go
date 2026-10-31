@@ -38,6 +38,9 @@ func (a *App) routes() http.Handler {
 	peer.HandleFunc("GET /peer/records", a.teamOnly(a.peerRecords))
 	peer.HandleFunc("GET /peer/record/{id}", a.teamOnly(a.peerRecord))
 	peer.HandleFunc("GET /peer/image/{name}", a.teamOnly(a.peerImage))
+	// 共享文件夹里的文件，给同事浏览和下载（只读），见 files.go
+	peer.HandleFunc("GET /peer/files", a.teamOnly(a.peerFiles))
+	peer.HandleFunc("GET /peer/file", a.teamOnly(a.peerFile))
 	// 新版本的安装包本来就是公开的，靠签名防伪，不需要团队口令
 	peer.HandleFunc("GET /peer/update", a.peerUpdate)
 	peer.HandleFunc("GET /peer/update/{name}", a.peerUpdateFile)
@@ -66,6 +69,14 @@ func (a *App) routes() http.Handler {
 	api.HandleFunc("POST /api/toggle", a.apiToggle)
 	api.HandleFunc("POST /api/update/check", a.apiUpdateCheck)
 	api.HandleFunc("POST /api/update/apply", a.apiUpdateApply)
+	// 从同事电脑上拿文件，见 downloads.go
+	api.HandleFunc("GET /api/peer-files", a.apiPeerFiles)
+	api.HandleFunc("POST /api/downloads", a.apiStartDownloads)
+	api.HandleFunc("POST /api/downloads/{id}/{action}", a.apiDownloadAction)
+	api.HandleFunc("POST /api/downloads/clear", a.apiClearDownloads)
+	api.HandleFunc("POST /api/downloads/open", a.apiOpenDownloadDir)
+	api.HandleFunc("POST /api/open-share", a.apiOpenShare)
+	api.HandleFunc("POST /api/backup", a.apiBackupVideo)
 	// 只看来源地址挡不住跨站请求：用户浏览的任何网页都能让浏览器往 localhost 发 POST，
 	// 所以再拒绝其他网站发来的修改请求
 	mux.Handle("/api/", localOnly(http.NewCrossOriginProtection().Handler(api)))
@@ -162,17 +173,8 @@ func (a *App) peerInfo(w http.ResponseWriter, r *http.Request) {
 	c := a.config()
 	writeJSON(w, peerInfo{
 		App: appName, ID: a.me().ID, Name: c.Nickname, Port: a.port, Locked: c.TeamKey != "",
-		Version: version, Update: a.upd.cache.Complete(),
+		Version: version, Update: a.upd.cache.Complete(), Files: a.fileShareOn(),
 	})
-}
-
-// listing 是本机分享的视频列表，带上版本信息。
-func (a *App) listing() []*media.VideoEntry {
-	vs, st := a.getVersions(), a.getStore()
-	if vs == nil || st == nil {
-		return []*media.VideoEntry{}
-	}
-	return vs.Listing(a.videos.List(), st.AnnotatedFPs())
 }
 
 func (a *App) peerVideos(w http.ResponseWriter, r *http.Request) {
@@ -304,13 +306,7 @@ func (a *App) apiState(w http.ResponseWriter, r *http.Request) {
 	c := a.config()
 	st := a.getStore()
 	me := a.me()
-	peers := []Peer{}
-	for _, p := range a.peers.Snapshot() {
-		// 导入身份后，旧电脑如果还开着会用同一个身份出现，不当成同事显示
-		if p.ID != me.ID {
-			peers = append(peers, p)
-		}
-	}
+	mine, peers := a.videoView()
 	resp := map[string]any{
 		// 设置过但共享文件夹暂时打不开时，仍算设置过，界面上提示原因，不回到欢迎页
 		"configured": c.Nickname != "" && c.ShareDir != "",
@@ -326,11 +322,17 @@ func (a *App) apiState(w http.ResponseWriter, r *http.Request) {
 		},
 		"port":    a.port,
 		"addrs":   a.lanAddrs(),
-		"mine":    a.listing(),
+		"mine":    mine,
 		"peers":   peers,
 		"os":      runtime.GOOS,
 		"version": version,
 		"update":  a.updateState(),
+		// 从同事那里拿文件
+		"downloads": a.downloadsView(),
+		"fileShare": !c.NoFileShare,
+		// 从 0.3.x 更新上来、还没提示过共享文件夹分成了三个子文件夹、里面的文件同事都能下载
+		"fileShareNotice": c.Nickname != "" && !c.FileShareNotified,
+		"layoutNote":      c.LayoutNote,
 	}
 	if st != nil {
 		resp["syncDir"] = st.Dir()
@@ -373,7 +375,7 @@ func (a *App) apiFS(w http.ResponseWriter, r *http.Request) {
 	}
 	dirs := []item{}
 	for _, e := range entries {
-		if e.IsDir() && !strings.HasPrefix(e.Name(), ".") && !strings.HasPrefix(e.Name(), "$") && e.Name() != store.SyncDirName {
+		if e.IsDir() && !strings.HasPrefix(e.Name(), ".") && !strings.HasPrefix(e.Name(), "$") && !store.IsSyncDir(e.Name()) {
 			dirs = append(dirs, item{Name: e.Name(), Path: filepath.Join(p, e.Name())})
 		}
 	}
@@ -395,7 +397,8 @@ func (a *App) apiFS(w http.ResponseWriter, r *http.Request) {
 			roots = append(roots, item{Label: v.Name(), Path: filepath.Join("/Volumes", v.Name())})
 		}
 	}
-	writeJSON(w, map[string]any{"path": p, "parent": parent, "dirs": dirs, "roots": roots})
+	// movable：选它做共享文件夹时，有多少项会挪进"分享"，网页上先让用户确认
+	writeJSON(w, map[string]any{"path": p, "parent": parent, "dirs": dirs, "roots": roots, "movable": store.MovableCount(p)})
 }
 
 func (a *App) apiAddPeer(w http.ResponseWriter, r *http.Request) {
@@ -415,7 +418,7 @@ func (a *App) apiAddPeer(w http.ResponseWriter, r *http.Request) {
 func (a *App) apiRescan(w http.ResponseWriter, r *http.Request) {
 	// 共享文件夹没打开时先重新打开（用户点"重试"会走这里，macOS 也会在这时弹出访问询问）
 	if dir := a.config().ShareDir; dir != "" && a.getStore() == nil {
-		if err := a.openShare(dir); err != nil {
+		if err := a.openShare(dir, false); err != nil {
 			httpErr(w, errors.New(a.shareError()), http.StatusBadRequest)
 			return
 		}
@@ -505,7 +508,8 @@ func (a *App) apiQuit(w http.ResponseWriter, r *http.Request) {
 	}()
 }
 
-// apiToggle 改托盘里也有的三个开关：运行服务、开机启动、开机后静默运行。
+// apiToggle 改托盘里也有的三个开关：运行服务、开机启动、开机后静默运行；
+// 还有"允许同事下载共享文件夹里的文件"，以及记下已经提示过这件事。
 func (a *App) apiToggle(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Name string
@@ -523,6 +527,14 @@ func (a *App) apiToggle(w http.ResponseWriter, r *http.Request) {
 		err = a.setAutostart(body.On)
 	case "silentStart":
 		err = a.setSilentStart(body.On)
+	case "fileShare":
+		c := a.config()
+		c.NoFileShare, c.FileShareNotified = !body.On, true
+		err = a.saveConfig(c)
+	case "fileShareNotified":
+		c := a.config()
+		c.FileShareNotified, c.LayoutNote = true, ""
+		err = a.saveConfig(c)
 	default:
 		err = errors.New("未知的开关")
 	}

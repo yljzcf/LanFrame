@@ -30,6 +30,11 @@ type Config struct {
 	ManualPeers []string `json:"manualPeers,omitempty"`
 	SilentStart bool     `json:"silentStart,omitempty"` // 开机启动时不弹出浏览器
 	Paused      bool     `json:"paused,omitempty"`      // 程序留在后台，但不分享、不同步
+	NoFileShare bool     `json:"noFileShare,omitempty"` // 不让同事下载共享文件夹里的文件（默认开放）
+	// 0.4.0 起共享文件夹分成三个子文件夹，里面的所有文件同事都能下载。从旧版本更新上来的人提示过一次就记下来；
+	// 新设置的人在设置页上已经看到了。LayoutNote 是整理共享文件夹的结果（挪了几项），提示时一起说
+	FileShareNotified bool   `json:"fileShareNotified,omitempty"`
+	LayoutNote        string `json:"layoutNote,omitempty"`
 }
 
 type App struct {
@@ -40,14 +45,16 @@ type App struct {
 	client  *http.Client // 访问其他电脑的小请求
 	stream  *http.Client // 转发视频，不设总超时
 	upd     *updater
+	dl      *downloads // 从同事那里拿的文件，见 downloads.go
 
 	mu       sync.Mutex
 	id       *store.Identity
 	cfg      Config
 	store    *store.Store
 	versions *media.Versions
-	onChange func() // 设置变了时通知托盘刷新，有托盘时才有
-	shareErr string // 共享文件夹打不开的原因
+	backups  *media.Backups // 从同事那里拿来的视频，见 internal/media/backups.go
+	onChange func()         // 设置变了时通知托盘刷新，有托盘时才有
+	shareErr string         // 共享文件夹打不开的原因
 }
 
 func newApp(dataDir string, port int) (*App, error) {
@@ -62,6 +69,7 @@ func newApp(dataDir string, port int) (*App, error) {
 		videos:  media.NewVideoLib(),
 		peers:   newPeers(),
 		upd:     newUpdater(dataDir),
+		dl:      loadDownloads(dataDir),
 		client:  &http.Client{Timeout: 30 * time.Second},
 		stream: &http.Client{Transport: &http.Transport{
 			DialContext:           (&net.Dialer{Timeout: 3 * time.Second}).DialContext,
@@ -78,24 +86,38 @@ func newApp(dataDir string, port int) (*App, error) {
 		}
 	}
 	if a.cfg.ShareDir != "" {
-		if err := a.openShare(a.cfg.ShareDir); err != nil {
+		if err := a.openShare(a.cfg.ShareDir, false); err != nil {
 			log.Printf("打开共享文件夹失败：%v", err)
 		}
 	}
 	return a, nil
 }
 
-func (a *App) openShare(dir string) error {
-	st, err := store.Open(dir)
+// openShare 打开共享文件夹。先整理成三个子文件夹（见 internal/store/layout.go）：从旧版本更新上来的，
+// 或者 move 为真时（用户换了共享文件夹并确认过），把原有的东西挪进"分享"。
+func (a *App) openShare(dir string, move bool) error {
+	layout, err := store.PrepareShare(dir, move)
+	var st *store.Store
+	if err == nil {
+		st, err = store.Open(dir)
+	}
 	if err != nil {
 		a.mu.Lock()
-		a.store, a.versions, a.shareErr = nil, nil, shareErrorText(dir, err)
+		a.store, a.versions, a.backups, a.shareErr = nil, nil, nil, shareErrorText(dir, err)
 		a.mu.Unlock()
 		return err
 	}
+	if note := layout.Note(); layout.Migrated && note != "" {
+		c := a.config()
+		c.LayoutNote = note
+		if err := a.saveConfig(c); err != nil {
+			log.Printf("保存整理结果失败：%v", err)
+		}
+	}
 	vs := media.LoadVersions(filepath.Join(st.Dir(), "versions.json"))
+	bk := media.LoadBackups(filepath.Join(st.Dir(), "backups.json"))
 	a.mu.Lock()
-	a.store, a.versions, a.shareErr = st, vs, ""
+	a.store, a.versions, a.backups, a.shareErr = st, vs, bk, ""
 	a.mu.Unlock()
 	a.rescan()
 	return nil
@@ -128,7 +150,9 @@ func (a *App) rescan() {
 	}
 	a.videos.Scan(dir)
 	if vs, st := a.getVersions(), a.getStore(); vs != nil && st != nil {
-		vs.Update(a.videos.List(), st.AnnotatedFPs())
+		// 备份是同事的视频，不进自己的版本组
+		own, _ := a.getBackups().Split(a.videos.List())
+		vs.Update(own, st.AnnotatedFPs())
 	}
 }
 
@@ -149,6 +173,12 @@ func (a *App) getStore() *store.Store {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	return a.store
+}
+
+func (a *App) getBackups() *media.Backups {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.backups
 }
 
 func (a *App) getVersions() *media.Versions {
@@ -245,11 +275,12 @@ func (a *App) setup(nickname, shareDir, teamKey string) error {
 	c := a.config()
 	changed := c.ShareDir != shareDir
 	c.Nickname, c.ShareDir, c.TeamKey = nickname, shareDir, strings.TrimSpace(teamKey)
+	c.FileShareNotified = true // 设置页上写着共享文件夹里的文件同事都能下载
 	if err := a.saveConfig(c); err != nil {
 		return err
 	}
 	if changed || a.getStore() == nil {
-		return a.openShare(shareDir)
+		return a.openShare(shareDir, changed) // 换了文件夹时，网页上已经确认过把原有的东西挪进"分享"
 	}
 	return nil
 }
@@ -335,12 +366,13 @@ func (a *App) start() {
 	go a.manualLoop()
 	go a.subnetScanLoop()
 	go a.updateLoop()
+	go a.downloadLoop()
 	go func() {
 		for i := 0; ; i++ {
 			time.Sleep(5 * time.Second)
 			// 共享文件夹打不开时（比如还没允许访问桌面）每 15 秒重试，允许后不用重启就能恢复
 			if dir := a.config().ShareDir; dir != "" && a.getStore() == nil && i%3 == 0 {
-				if a.openShare(dir) == nil {
+				if a.openShare(dir, false) == nil {
 					log.Printf("共享文件夹已恢复：%s", dir)
 				}
 			}

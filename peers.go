@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -11,6 +12,8 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -50,10 +53,122 @@ type Peers struct {
 	byID     map[string]*Peer
 	syncing  map[string]bool
 	rejected map[string]time.Time // "电脑 ID/记录 ID" -> 拒绝的时间。按电脑分开记，一台电脑上的副本坏了，还能从别的电脑拿到好的
+	known    map[string]knownPeer // 以前见过的同事，存在 people.json 里，见 people()
+	saved    []byte               // 上次写进 people.json 的内容，没变就不写
 }
 
 func newPeers() *Peers {
-	return &Peers{byID: map[string]*Peer{}, syncing: map[string]bool{}, rejected: map[string]time.Time{}}
+	return &Peers{byID: map[string]*Peer{}, syncing: map[string]bool{}, rejected: map[string]time.Time{}, known: map[string]knownPeer{}}
+}
+
+// knownPeer 是见过的同事。存在配置目录的 people.json 里，重启以后离线的人也还在成员列表里。
+type knownPeer struct {
+	Name     string `json:"name"`
+	LastSeen int64  `json:"lastSeen"`
+	Version  string `json:"version,omitempty"`
+}
+
+func (ps *Peers) loadKnown(dataDir string) {
+	data, err := os.ReadFile(filepath.Join(dataDir, "people.json"))
+	if err != nil {
+		return
+	}
+	ps.mu.Lock()
+	defer ps.mu.Unlock()
+	if err := json.Unmarshal(data, &ps.known); err != nil {
+		log.Printf("成员目录 people.json 坏了，从头记：%v", err)
+		ps.known = map[string]knownPeer{}
+	}
+	ps.saved = data
+}
+
+// saveKnown 把这次运行见过的同事记进 people.json，定时调用。
+func (ps *Peers) saveKnown(dataDir string) {
+	ps.mu.Lock()
+	for id, p := range ps.byID {
+		k := ps.known[id]
+		k.Name, k.LastSeen = p.Name, p.LastSeen
+		if p.Version != "" {
+			k.Version = p.Version
+		}
+		ps.known[id] = k
+	}
+	data, _ := json.MarshalIndent(ps.known, "", "  ")
+	same := bytes.Equal(data, ps.saved)
+	ps.mu.Unlock()
+	if same {
+		return
+	}
+	if err := store.WriteFileAtomic(filepath.Join(dataDir, "people.json"), data); err != nil {
+		log.Printf("保存成员目录失败：%v", err)
+		return
+	}
+	ps.mu.Lock()
+	ps.saved = data
+	ps.mu.Unlock()
+}
+
+// Person 是成员列表里的一个人。一台电脑就是一个人。
+type Person struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Code        string `json:"code"`
+	Online      bool   `json:"online"`
+	LastSeen    int64  `json:"lastSeen,omitempty"` // 最后在线的时间；只在批注里出现过、没直接见过的是 0
+	Addr        string `json:"addr,omitempty"`
+	Version     string `json:"version,omitempty"`
+	KeyMismatch bool   `json:"keyMismatch,omitempty"`
+}
+
+// people 是成员列表：这次运行见过的同事（peers，videoView 给的，包括按备份记录补的离线同事）、
+// 以前见过的同事、批注记录里出现过的人。昵称取最新的：直接见到的和批注里的，哪个时间新用哪个。
+func (a *App) people(peers []Peer) []Person {
+	me := a.me().ID
+	byID := map[string]*Person{}
+	get := func(id string) *Person {
+		p := byID[id]
+		if p == nil {
+			p = &Person{ID: id, Code: store.DeviceCode(id)}
+			byID[id] = p
+		}
+		return p
+	}
+	a.peers.mu.Lock()
+	for id, k := range a.peers.known {
+		p := get(id)
+		p.Name, p.LastSeen, p.Version = k.Name, k.LastSeen, k.Version
+	}
+	a.peers.mu.Unlock()
+	for _, x := range peers {
+		p := get(x.ID)
+		p.Name, p.Online, p.KeyMismatch = x.Name, x.Online, x.KeyMismatch
+		if x.LastSeen > 0 {
+			p.LastSeen, p.Addr = x.LastSeen, x.Addr
+		}
+		if x.Version != "" {
+			p.Version = x.Version
+		}
+	}
+	if st := a.getStore(); st != nil {
+		for id, r := range st.People() {
+			if p := byID[id]; p == nil || p.Name == "" || (!p.Online && r.Time > p.LastSeen) {
+				get(id).Name = r.Name
+			}
+		}
+	}
+	out := make([]Person, 0, len(byID))
+	for id, p := range byID {
+		if id != me && p.Name != "" {
+			out = append(out, *p)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Online != out[j].Online {
+			return out[i].Online
+		}
+		return out[i].LastSeen > out[j].LastSeen
+	})
+	return out
 }
 
 func (ps *Peers) seen(id, name, addr string) {

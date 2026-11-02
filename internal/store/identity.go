@@ -55,6 +55,12 @@ func writeIdentity(path string, seed []byte) error {
 	return os.WriteFile(path, []byte(hex.EncodeToString(seed)), 0o600)
 }
 
+// ValidDeviceID 判断是不是合法的设备 ID（Ed25519 公钥的 base64url）。
+func ValidDeviceID(id string) bool {
+	pub, err := base64.RawURLEncoding.DecodeString(id)
+	return err == nil && len(pub) == ed25519.PublicKeySize
+}
+
 // DeviceCode 是给人看的短设备码，例如 3F9A-C21B。
 func DeviceCode(id string) string {
 	sum := sha256.Sum256([]byte(id))

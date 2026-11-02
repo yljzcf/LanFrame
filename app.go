@@ -46,6 +46,7 @@ type App struct {
 	stream  *http.Client // 转发视频，不设总超时
 	upd     *updater
 	dl      *downloads // 从同事那里拿的文件，见 downloads.go
+	inbox   *inbox     // 提醒的已读状态，见 notify.go
 
 	mu       sync.Mutex
 	id       *store.Identity
@@ -70,12 +71,14 @@ func newApp(dataDir string, port int) (*App, error) {
 		peers:   newPeers(),
 		upd:     newUpdater(dataDir),
 		dl:      loadDownloads(dataDir),
+		inbox:   loadInbox(dataDir),
 		client:  &http.Client{Timeout: 30 * time.Second},
 		stream: &http.Client{Transport: &http.Transport{
 			DialContext:           (&net.Dialer{Timeout: 3 * time.Second}).DialContext,
 			ResponseHeaderTimeout: 10 * time.Second,
 		}},
 	}
+	a.peers.loadKnown(dataDir)
 	data, err := os.ReadFile(filepath.Join(dataDir, "config.json"))
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return nil, err
@@ -349,6 +352,10 @@ func (a *App) start() {
 				if a.openShare(dir, false) == nil {
 					log.Printf("共享文件夹已恢复：%s", dir)
 				}
+			}
+			a.checkInbox() // 未读数变了就刷新托盘
+			if i%12 == 0 {
+				a.peers.saveKnown(a.dataDir)
 			}
 			if a.paused() {
 				continue

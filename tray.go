@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"log"
 	"runtime"
 
@@ -16,6 +17,8 @@ func (a *App) runTray(url string) {
 		mStatus := systray.AddMenuItem("", "")
 		mStatus.Disable()
 		mOpen := systray.AddMenuItem("打开界面", "在浏览器里打开审片界面")
+		mInbox := systray.AddMenuItem("", "看看谁批注了你的视频、@ 了你、回复了你")
+		mInbox.Hide()
 		mUpdate := systray.AddMenuItem("", "换上已经下载好的新版本，程序会重启几秒钟")
 		mUpdate.Hide()
 		systray.AddSeparator()
@@ -54,6 +57,17 @@ func (a *App) runTray(url string) {
 			if !platform.AutostartSupported() {
 				mAuto.Disable()
 			}
+			// 新提醒：Mac 菜单栏图标旁边显示数字，Windows 托盘不能显示文字，写在悬停提示里
+			if n, _ := a.inboxSummary(); n > 0 {
+				mInbox.SetTitle(fmt.Sprintf("%d 条新提醒", n))
+				mInbox.Show()
+				systray.SetTitle(fmt.Sprint(n))
+				systray.SetTooltip(fmt.Sprintf("局域网审片 · %d 条新提醒", n))
+			} else {
+				mInbox.Hide()
+				systray.SetTitle("")
+				systray.SetTooltip("局域网审片")
+			}
 			if u := a.updateState(); u.Ready && u.Blocked == "" {
 				mUpdate.SetTitle("更新到 " + u.Latest)
 				mUpdate.Show()
@@ -75,6 +89,8 @@ func (a *App) runTray(url string) {
 				select {
 				case <-mOpen.ClickedCh:
 					openBrowser(url)
+				case <-mInbox.ClickedCh:
+					openBrowser(url + "#inbox")
 				case <-mUpdate.ClickedCh:
 					go a.applyUpdateFromTray()
 				case <-mRun.ClickedCh:

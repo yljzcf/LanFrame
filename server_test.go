@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"lanreview/internal/store"
 )
 
 // 检查接口的几道防线：本机接口拒绝其他网站发来的修改请求，/peer/ 拒绝浏览器，局域网访问不了本机接口。
@@ -56,4 +58,29 @@ func TestFavicon(t *testing.T) {
 	if _, err := png.Decode(bytes.NewReader(w.Body.Bytes())); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// @ 的人：不是设备 ID 的拒绝，重复的和自己去掉。
+func TestCheckContentMentions(t *testing.T) {
+	me, other := mustIdentity(t), mustIdentity(t)
+	c := store.Content{Text: "@B @B @我", Mentions: []string{other.ID, other.ID, me.ID}}
+	if err := checkContent(nil, &c, me.ID); err != nil {
+		t.Fatal(err)
+	}
+	if len(c.Mentions) != 1 || c.Mentions[0] != other.ID {
+		t.Fatalf("去重以后应该只剩 B：%v", c.Mentions)
+	}
+	bad := store.Content{Text: "@x", Mentions: []string{"x"}}
+	if checkContent(nil, &bad, me.ID) == nil {
+		t.Fatal("不是设备 ID 的应该拒绝")
+	}
+}
+
+func mustIdentity(t *testing.T) *store.Identity {
+	t.Helper()
+	id, err := store.LoadIdentity(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return id
 }

@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -61,6 +62,9 @@ func (a *App) routes() http.Handler {
 	api.HandleFunc("POST /api/versions/move", a.apiVersionMove)
 	api.HandleFunc("POST /api/versions/rename", a.apiVersionRename)
 	api.HandleFunc("POST /api/toggle", a.apiToggle)
+	// 提醒，见 notify.go
+	api.HandleFunc("GET /api/inbox", a.apiInbox)
+	api.HandleFunc("POST /api/inbox/read", a.apiInboxRead)
 	api.HandleFunc("POST /api/update/check", a.apiUpdateCheck)
 	api.HandleFunc("POST /api/update/apply", a.apiUpdateApply)
 	// 从同事电脑上拿文件，见 downloads.go
@@ -301,6 +305,7 @@ func (a *App) apiState(w http.ResponseWriter, r *http.Request) {
 	st := a.getStore()
 	me := a.me()
 	mine, peers := a.videoView()
+	unread, newest := a.inboxSummary()
 	resp := map[string]any{
 		// 设置过但共享文件夹暂时打不开时，仍算设置过，界面上提示原因，不回到欢迎页
 		"configured": c.Nickname != "" && c.ShareDir != "",
@@ -318,6 +323,8 @@ func (a *App) apiState(w http.ResponseWriter, r *http.Request) {
 		"addrs":   a.lanAddrs(),
 		"mine":    mine,
 		"peers":   peers,
+		"people":  a.people(peers), // 成员列表：见过的同事和批注里出现过的人
+		"inbox":   map[string]any{"unread": unread, "newest": newest},
 		"os":      runtime.GOOS,
 		"version": version,
 		"update":  a.updateState(),
@@ -576,10 +583,21 @@ func (a *App) apiAnnotations(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{"items": items, "deleted": deleted, "version": st.Version()})
 }
 
-func checkContent(st *store.Store, c *store.Content) error {
-	if c.Frame < 0 || utf8.RuneCountInString(c.Text) > 5000 || len(c.Strokes) > 500 || len(c.Attachments) > 20 {
+// checkContent 检查网页发来的批注内容。@ 的人去掉重复的和自己。
+func checkContent(st *store.Store, c *store.Content, me string) error {
+	if c.Frame < 0 || utf8.RuneCountInString(c.Text) > 5000 || len(c.Strokes) > 500 || len(c.Attachments) > 20 || len(c.Mentions) > 20 {
 		return errors.New("批注内容不合法")
 	}
+	var mentions []string
+	for _, id := range c.Mentions {
+		if !store.ValidDeviceID(id) {
+			return errors.New("@ 的人不对")
+		}
+		if id != me && !slices.Contains(mentions, id) {
+			mentions = append(mentions, id)
+		}
+	}
+	c.Mentions = mentions
 	if strings.TrimSpace(c.Text) == "" && len(c.Strokes) == 0 && len(c.Attachments) == 0 {
 		return errors.New("批注是空的：写点文字、画一笔或者加一张图")
 	}
@@ -657,12 +675,12 @@ func (a *App) apiCreate(w http.ResponseWriter, r *http.Request) {
 		httpErr(w, errors.New("视频信息不完整"), http.StatusBadRequest)
 		return
 	}
-	if err := checkContent(st, &body.Content); err != nil {
+	me := a.me()
+	if err := checkContent(st, &body.Content, me.ID); err != nil {
 		httpErr(w, err, http.StatusBadRequest)
 		return
 	}
 	// 批注 ID 前半段是作者标记，后半段随机
-	me := a.me()
 	id := store.AuthorTag(me.ID) + store.RandomHex(8)
 	rec := a.newRecord(st, me, "create", id)
 	rec.ID = id
@@ -701,7 +719,7 @@ func (a *App) apiAction(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		body.Content.Frame, body.Content.Seconds, body.Content.Shot = create.Content.Frame, create.Content.Seconds, create.Content.Shot
-		if err := checkContent(st, &body.Content); err != nil {
+		if err := checkContent(st, &body.Content, me.ID); err != nil {
 			httpErr(w, err, http.StatusBadRequest)
 			return
 		}

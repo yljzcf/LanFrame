@@ -45,7 +45,49 @@ function fmtTime(ms) {
   return `${d.getMonth() + 1}-${d.getDate()} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
 }
 const round4 = (x) => Math.round(Math.min(1, Math.max(0, x)) * 10000) / 10000;
-const nameOf = (id, fallback) => (id === S.me.id ? `${S.me.name}（我）` : (S.peers || []).find((p) => p.id === id)?.name || fallback);
+// 按钮一律是"图标 + 两个字"，图标在 index.html 的 <symbol> 里；完整意思写在 title 里
+const ico = (name, cls = '') => `<svg class="ico ${cls}"><use href="#i-${name}"/></svg>`;
+const btn = (icon, text, attrs = '') => `<button ${attrs}>${ico(icon)}<span>${text}</span></button>`;
+function setBtn(el, icon, text) {
+  const html = `${ico(icon)}<span>${text}</span>`;
+  if (el.innerHTML !== html) el.innerHTML = html;
+}
+
+// ---------- 成员 ----------
+// 一台电脑就是一个人。S.people 是程序给的成员目录：见过的同事、批注里出现过的人（不含自己）。
+let peopleById = new Map();
+let dupNames = new Set(); // 重名的昵称：显示时带上设备码区分
+let namesKey = '';        // 有人改了名字时，批注列表要重画
+
+function indexPeople() {
+  peopleById = new Map((S.people || []).map((p) => [p.id, p]));
+  const key = JSON.stringify([S.me.name, (S.people || []).map((p) => `${p.id}:${p.name}`).sort()]);
+  if (namesKey && key !== namesKey && cur) setTimeout(renderComments);
+  namesKey = key;
+  const seen = new Set([S.me.name]);
+  dupNames = new Set();
+  for (const p of S.people || []) {
+    if (seen.has(p.name)) dupNames.add(p.name);
+    seen.add(p.name);
+  }
+}
+// rawName 是这个人现在的昵称（改过名的，旧批注也显示新名字）
+const rawName = (id, fallback) => (id === S.me.id ? S.me.name : peopleById.get(id)?.name || (S.peers || []).find((p) => p.id === id)?.name || fallback || '');
+// personName 是显示用的名字：重名时后面带设备码前四位，比如"张三（3F9A）"
+function personName(id, fallback) {
+  const name = rawName(id, fallback);
+  const code = id === S.me.id ? S.me.code : peopleById.get(id)?.code;
+  return dupNames.has(name) && code ? `${name}（${code.slice(0, 4)}）` : name;
+}
+const nameOf = (id, fallback) => (id === S.me.id ? `${personName(id)}（我）` : personName(id, fallback));
+
+function fmtAgo(ms) {
+  const m = Math.floor((Date.now() - ms) / 60000);
+  if (m < 1) return '刚刚';
+  if (m < 60) return `${m} 分钟前`;
+  if (m < 24 * 60) return `${Math.floor(m / 60)} 小时前`;
+  return fmtTime(ms);
+}
 const myAddrs = () => (S.addrs || []).map((a) => `<code>http://${a}:${S.port}</code>`).join(' ') || '（没有检测到局域网地址）';
 
 // ---------- 状态轮询 ----------
@@ -58,6 +100,7 @@ async function refresh() {
     if (!modalKind) openSetup(true);
     return;
   }
+  indexPeople();
   $('#me').textContent = `${s.me.name} · 设备码 ${s.me.code}`;
   $('#paused-bar').hidden = !s.paused;
   if (renderUpdate()) return;
@@ -66,8 +109,13 @@ async function refresh() {
   if ($('#share-error-text').textContent !== (s.shareError || '')) $('#share-error-text').textContent = s.shareError || '';
   renderVideos();
   renderDownloads();
+  checkInbox();
+  if (modalKind === 'people') renderPeopleList();
   tryOpenLink();
-  if (cur) {
+  if (cur?.placeholder && findVideo(cur.owner, cur.fp).v && !editor) {
+    // 从提醒打开的、当时找不到的视频，现在出现了：按正常的视频重新打开
+    selectVideo(cur.owner, cur.fp);
+  } else if (cur) {
     // 版本信息可能变了（比如刚确认了新版本），同步到当前视频
     const fresh = findVideo(cur.owner, cur.fp).v;
     if (fresh) Object.assign(cur, { name: fresh.name, title: fresh.title, group: fresh.group, version: fresh.version, versions: fresh.versions, missing: fresh.missing, suggest: fresh.suggest, holders: fresh.holders, backup: fresh.backup, local: fresh.local });
@@ -124,22 +172,22 @@ function videoRow(v, ownerId, sub) {
     ${v.suggest ? '<span class="tag">新版本？</span>' : ''}
     ${n ? `<span class="badge" title="批注数">${n}</span>` : ''}</div>
     ${active ? `<div class="video-tools">${backupButton(v, ownerId)}
-      <button data-vtool="share" title="复制一个直接打开这个视频的链接">分享视频</button>
-      <button data-vtool="export" title="把这个版本的所有批注导出成一个带截图的网页表格">导出批注</button></div>` : ''}`;
+      ${btn('share', '分享', 'data-vtool="share" title="分享视频：复制一个直接打开这个视频的链接"')}
+      ${btn('export', '导出', 'data-vtool="export" title="导出批注：把这个版本的所有批注导出成一个带截图的网页表格"')}</div>` : ''}`;
 }
 
-// backupButton 是同事的视频下面的"备份视频"：拿一份存到本机共享文件夹的"备份"里，原主人不在时别人也能从你这里看。
-// 自己的视频没有这个按钮；已经备份过、正在备份时按钮变灰。
+// backupButton 是同事的视频下面的"备份"：拿一份存到本机共享文件夹的"备份"里，原主人不在时别人也能从你这里看。
+// 自己的视频没有这个按钮；已经备份过（对勾）、正在备份（转圈）时按钮变灰。
 function backupButton(v, ownerId) {
   if (ownerId === S.me.id || v.missing) return '';
-  if (v.local) return '<button disabled title="已经备份在你共享文件夹的“备份”里">已备份</button>';
-  if ((S.downloads || []).some((d) => d.fp === v.fp && dlActive(d))) return '<button disabled title="左边列表底部能看进度">备份中…</button>';
-  return '<button data-vtool="backup" title="拿一份原片存到你共享文件夹的“备份”里，原主人不在时同事也能从你这里看，批注是同一套">备份视频</button>';
+  if (v.local) return `<button disabled title="已经备份在你共享文件夹的“备份”里">${ico('check')}<span>备份</span></button>`;
+  if ((S.downloads || []).some((d) => d.fp === v.fp && dlActive(d))) return `<button disabled title="正在备份，点左上角“下载”能看进度">${ico('spinner', 'spin')}<span>备份</span></button>`;
+  return btn('backup', '备份', 'data-vtool="backup" title="备份视频：拿一份原片存到你共享文件夹的“备份”里，原主人不在时同事也能从你这里看，批注是同一套"');
 }
 
 function renderVideos() {
   const groups = [{ id: S.me.id, name: '我的视频', online: true, videos: S.mine || [], mine: true }];
-  for (const p of S.peers || []) groups.push({ id: p.id, name: p.name, online: p.online, videos: p.videos || [], keyMismatch: p.keyMismatch, files: p.files });
+  for (const p of S.peers || []) groups.push({ id: p.id, name: personName(p.id, p.name), online: p.online, videos: p.videos || [], keyMismatch: p.keyMismatch, files: p.files });
   const backing = (S.downloads || []).filter((d) => d.fp && dlActive(d)).map((d) => d.fp); // "备份中…"的按钮跟着变
   const key = JSON.stringify([groups, S.counts, cur?.fp, cur?.owner, backing]);
   if (key === lastListKey) return;
@@ -150,13 +198,13 @@ function renderVideos() {
       const why = g.mine ? '"分享"里还没有视频' : g.keyMismatch ? '团队口令和你的不一样，看不到对方的视频' : '没有分享视频';
       items = `<div class="empty-group">${why}</div>`;
     }
-    const files = g.mine ? '<button class="link files-btn" data-open-share title="打开共享文件夹里的“分享”，要给同事看的视频和文件放在这里">打开文件夹</button>'
+    const files = g.mine ? btn('folder', '文件', 'class="mini files-btn" data-open-share title="打开共享文件夹里的“分享”，要给同事看的视频和文件放在这里"')
       : g.online && g.files && !g.keyMismatch
-        ? `<button class="link files-btn" data-files="${esc(g.id)}" title="浏览和下载 ${esc(g.name)} 共享文件夹里的文件">文件</button>` : '';
+        ? btn('folder', '文件', `class="mini files-btn" data-files="${esc(g.id)}" title="浏览和下载 ${esc(g.name)} 共享文件夹里的文件"`) : '';
     return `<div class="group-head"><span class="dot ${g.online ? 'on' : ''}"></span>${esc(g.name)}${!g.mine && !g.online ? '（离线）' : ''}${files}</div>${items}`;
   }).join('');
   if (!(S.peers || []).length) {
-    html += '<div class="empty-group">还没发现同事的电脑。确认对方已经打开程序；过一会儿还没出现，点右上角"添加用户"输入对方电脑的 IP。</div>';
+    html += '<div class="empty-group">还没发现同事的电脑。确认对方已经打开程序；过一会儿还没出现，点右上角"成员"输入对方电脑的 IP。</div>';
   }
   $('#video-list').innerHTML = html;
 }
@@ -165,7 +213,7 @@ $('#video-list').addEventListener('click', (e) => {
   const files = e.target.closest('[data-files]')?.dataset.files;
   if (files) { openFiles(files, ''); return; }
   if (e.target.closest('[data-open-share]')) { post('/api/open-share').catch((err) => alert(err.message)); return; }
-  // 当前视频名下面的"备份视频""分享视频""导出批注"
+  // 当前视频名下面的"备份""分享""导出"
   const tool = e.target.closest('[data-vtool]')?.dataset.vtool;
   if (tool === 'share') { shareVideo(); return; }
   if (tool === 'export') { exportAnnotations(); return; }
@@ -177,14 +225,20 @@ $('#video-list').addEventListener('click', (e) => {
 function findVideo(ownerId, fp) {
   if (ownerId === S.me.id) return { v: (S.mine || []).find((x) => x.fp === fp), ownerName: S.me.name };
   const p = (S.peers || []).find((x) => x.id === ownerId);
-  return { v: p?.videos?.find((x) => x.fp === fp), ownerName: p?.name };
+  return { v: p?.videos?.find((x) => x.fp === fp), ownerName: p && personName(p.id, p.name) };
 }
 
-function selectVideo(ownerId, fp) {
-  if (editor && !confirm('正在写的批注还没发布，确定离开吗？')) return;
+// selectVideo 打开一个视频。ref 是批注里记的视频信息（从提醒打开时给）：谁的列表里都找不到这个视频时
+// （比如主人离线、这次运行没见过他），用它打开一个只能看批注的占位，视频出现后 refresh 会重新打开。
+function selectVideo(ownerId, fp, ref) {
+  if (editor && !confirm('正在写的批注还没发布，确定离开吗？')) return false;
   closeEditor();
-  const { v, ownerName } = findVideo(ownerId, fp);
-  if (!v) return;
+  let { v, ownerName } = findVideo(ownerId, fp);
+  if (!v && ref) {
+    v = { fp, name: ref.name, fps: ref.fps, size: 0, versions: 1, version: 1, placeholder: true };
+    ownerName = personName(ownerId, ref.ownerName);
+  }
+  if (!v) return false;
   cur = { ...v, owner: ownerId, ownerName };
   focused = null;
   frame = 0;
@@ -202,7 +256,12 @@ function selectVideo(ownerId, fp) {
   else if (v.vfr) warn = '可变帧率素材，帧号可能不准';
   $('#video-meta').textContent = meta.join(' · ') + (warn ? ` · ${warn}` : '');
   $('#video-meta').classList.toggle('warn', !!warn);
-  if (v.missing) {
+  if (v.placeholder) {
+    videoOffline = true;
+    video.removeAttribute('src');
+    video.load();
+    showMsg(`视频所在的电脑不在线，只能看批注和截图。${ownerName || '对方'}上线后会自动加载。`);
+  } else if (v.missing) {
     videoOffline = false;
     video.removeAttribute('src');
     video.load();
@@ -216,6 +275,7 @@ function selectVideo(ownerId, fp) {
   renderComments();
   onFrameChanged();
   loadAnns();
+  return true;
 }
 
 function reloadVideo() {
@@ -225,12 +285,13 @@ function reloadVideo() {
 }
 
 // 标题：先是带版本号的名称，后面灰字是本地文件名
-// 控制栏左边：带版本号的名称（自己的视频后面跟着"改名""调整版本"），下面灰字是本地文件名、分享者、大小、版本数
+// 控制栏左边：带版本号的名称（自己的视频后面跟着"改名""版本"），下面灰字是本地文件名、分享者、大小、版本数
 function renderTitle() {
   const mine = cur.owner === S.me.id;
   const title = `<span class="vname" title="${esc(versionedName(cur))}">${esc(versionedName(cur))}</span>`
-    + (mine ? '<button class="link" data-ver="rename">改名</button><button class="link" data-ver="adjust">调整版本</button>' : '');
-  const sub = [cur.name, `${cur.ownerName} 分享${cur.backup ? '（备份版）' : ''}`, fmtSize(cur.size)];
+    + (mine ? btn('rename', '改名', 'class="mini" data-ver="rename" title="修改视频名称"') + btn('layers', '版本', 'class="mini" data-ver="adjust" title="调整版本：归到别的视频下面，或者单独拆出来"') : '');
+  const sub = [cur.name, `${personName(cur.owner, cur.ownerName)} 分享${cur.backup ? '（备份版）' : ''}`];
+  if (cur.size) sub.push(fmtSize(cur.size));
   if (cur.holders?.length) sub.push(`备份在${cur.holders.join('、')}`);
   if (cur.versions > 1) sub.push(`共 ${cur.versions} 个版本`);
   if ($('#video-title').innerHTML !== title) $('#video-title').innerHTML = title;
@@ -244,7 +305,7 @@ function renderVersionBar() {
   let html = '';
   if (cur && cur.owner === S.me.id && cur.suggest) {
     html = `<span>这个文件和「${esc(cur.suggest)}」名字相近，是它的新版本吗？</span>
-      <button class="primary" data-ver="yes">是，归为新版本</button><button data-ver="no">不是</button>`;
+      ${btn('check', '是的', 'class="primary" data-ver="yes" title="是，归为新版本"')}${btn('x', '不是', 'data-ver="no"')}`;
   }
   if (bar.innerHTML !== html) bar.innerHTML = html;
   bar.hidden = !html;
@@ -272,8 +333,8 @@ function openAdjustVersion() {
     <h2>调整版本</h2>
     <p class="muted">把「${esc(cur.name)}」归到哪个视频下面，作为它的一个版本？版本号按文件修改时间排列，每个版本的批注各自独立。</p>
     <div class="field">${options ? `<select id="vm-group">${options}</select>` : '<p>你没有其他视频可以归入。</p>'}</div>
-    <div class="modal-actions"><span class="error" id="vm-err"></span><button id="vm-cancel">取消</button>
-      <button class="primary" id="vm-ok" ${options ? '' : 'disabled'}>确定</button></div>`);
+    <div class="modal-actions"><span class="error" id="vm-err"></span>${btn('x', '取消', 'id="vm-cancel"')}
+      ${btn('check', '确定', `class="primary" id="vm-ok" ${options ? '' : 'disabled'}`)}</div>`);
   $('#vm-cancel').onclick = closeModal;
   $('#vm-ok').onclick = async () => {
     try {
@@ -303,7 +364,7 @@ function openRename() {
     <label class="row"><input type="checkbox" id="rn-files" checked> 同时把我电脑上的文件改名为"名称_v版本号"</label>
     <div id="rn-preview" class="muted" style="margin-top:8px"></div>
     <p class="muted">改名不影响批注。如果这个文件被剪辑软件的工程引用，改名后工程里会显示素材离线。</p>
-    <div class="modal-actions"><span class="error" id="rn-err"></span><button id="rn-cancel">取消</button><button class="primary" id="rn-ok">保存</button></div>`);
+    <div class="modal-actions"><span class="error" id="rn-err"></span>${btn('x', '取消', 'id="rn-cancel"')}${btn('save', '保存', 'class="primary" id="rn-ok"')}</div>`);
   const check = () => {
     const name = $('#rn-name').value.trim();
     let err = '';
@@ -434,10 +495,10 @@ function togglePlay() {
 
 const frameAtTime = () => Math.floor(video.currentTime * fps() + 1e-4);
 
-video.addEventListener('play', () => { $('#btn-play').textContent = '暂停'; drawOverlay(); });
+video.addEventListener('play', () => { setBtn($('#btn-play'), 'pause', '暂停'); drawOverlay(); });
 // 播放中的帧回调可能被节流，暂停时以当前时间为准对齐到整帧，保证画面和帧号一致
 video.addEventListener('pause', () => {
-  $('#btn-play').textContent = '播放';
+  setBtn($('#btn-play'), 'play', '播放');
   if (!video.seeking) seekFrame(frameAtTime());
 });
 $('#btn-play').onclick = togglePlay;
@@ -612,10 +673,13 @@ function openEditor(mode, ann) {
     tool: 'pen',
     color: '#ff3b30',
     draft: null,
+    mentions: mentionsOf(ann?.content),
   };
   $('#ed-text').value = ann?.content.text || '';
   $('#ed-frame').textContent = `${mode === 'edit' ? '修改' : '批注'} ${tc(editor.frame)}（帧 ${editor.frame}）`;
-  $('#ed-save').textContent = mode === 'edit' ? '保存修改' : '发布批注';
+  if (mode === 'edit') setBtn($('#ed-save'), 'save', '保存');
+  else setBtn($('#ed-save'), 'send', '发布');
+  $('#ed-save').title = mode === 'edit' ? '保存修改' : '发布批注';
   $('#ed-error').textContent = '';
   $('#editor').hidden = false;
   $('#btn-annotate').disabled = true;
@@ -628,6 +692,7 @@ function openEditor(mode, ann) {
 
 function closeEditor() {
   editor = null;
+  closeMention();
   removeTextInput();
   $('#editor').hidden = true;
   $('#btn-annotate').disabled = false;
@@ -698,7 +763,8 @@ $('#ed-save').onclick = async () => {
   btn.disabled = true;
   $('#ed-error').textContent = '';
   try {
-    const content = { text: $('#ed-text').value.trim(), strokes: editor.strokes, attachments: editor.attachments };
+    const text = $('#ed-text').value.trim();
+    const content = { text, strokes: editor.strokes, attachments: editor.attachments, mentions: pickMentions(text, editor.mentions) };
     if (!content.text && !content.strokes.length && !content.attachments.length) {
       throw new Error('批注是空的：写点文字、画一笔或者加一张图');
     }
@@ -734,6 +800,8 @@ async function loadAnns() {
     annVersion = r.version;
     renderComments();
     drawOverlay();
+    applyPendingFocus();
+    readCurrentVideo();
   } catch { /* 下次轮询再试 */ }
 }
 
@@ -752,7 +820,7 @@ function renderComments() {
         title="${esc(nameOf(a.author, a.authorName))}：${esc(a.content.text.slice(0, 40))}"></div>`).join('')
     : '';
   if (!anns.items.length && !anns.deleted.length) {
-    list.innerHTML = '<div class="muted pad">这个视频还没有批注。暂停到想说的那一帧，点"批注这一帧"或按 C。</div>';
+    list.innerHTML = '<div class="muted pad">这个视频还没有批注。暂停到想说的那一帧，点"批注"或按 C。</div>';
     return;
   }
   // 重画前记下回复框的输入位置，重画后还原，同步刷新时不打断正在写的回复
@@ -766,6 +834,12 @@ function renderComments() {
     const ta = list.querySelector('.reply-box textarea');
     ta?.focus();
     ta?.setSelectionRange(...caret);
+  }
+  // 回复框重画过，@ 的列表跟到新的输入框上
+  if (mentionPop.ta && !mentionPop.ta.isConnected) {
+    const ta = list.querySelector('.reply-box textarea');
+    if (ta && ta === document.activeElement) onMentionInput(ta);
+    else closeMention();
   }
 }
 
@@ -808,10 +882,25 @@ function threads() {
 const expanded = new Set(); // 展开了完整内容的卡片
 let replyDraft = null;       // 正在写的回复：{ root, edit, text, atts }
 
+// textHTML 是批注文字，@ 的人加上高亮（@ 我的更醒目）。文字里写的是 @ 时的昵称，对方改过名的就不高亮了
+function textHTML(c) {
+  const html = esc(c.text);
+  const names = new Map();
+  for (const id of c.mentions || []) {
+    const name = rawName(id);
+    if (name) names.set(esc('@' + name), id === S.me.id);
+  }
+  if (!names.size) return html;
+  // 长的先匹配，"@小王子"不会被当成"@小王"
+  const re = new RegExp([...names.keys()].sort((a, b) => b.length - a.length)
+    .map((t) => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|'), 'g');
+  return html.replace(re, (t) => `<span class="at ${names.get(t) ? 'me' : ''}">${t}</span>`);
+}
+
 // 批注内容：收起时附图只显示成 [图片]；展开时显示全文和附图
 function contentHTML(c, open, emptyText) {
   const imgs = c.attachments || [];
-  const text = c.text ? esc(c.text) : (imgs.length ? '' : `<span class="muted">${emptyText}</span>`);
+  const text = c.text ? textHTML(c) : (imgs.length ? '' : `<span class="muted">${emptyText}</span>`);
   if (!open) return `${imgs.length ? `<span class="img-mark">[图片${imgs.length > 1 ? ` ×${imgs.length}` : ''}]</span> ` : ''}${text}`;
   return `${text}${imgs.length ? `<div class="atts">${imgs.map((n) => `<a href="/api/images/${n}" target="_blank" title="查看原图"><img src="/api/images/${n}"></a>`).join('')}</div>` : ''}`;
 }
@@ -820,7 +909,7 @@ function contentHTML(c, open, emptyText) {
 function cardHTML(a, replies) {
   const open = expanded.has(a.id);
   const edited = a.history.length > 1
-    ? '<button class="link" data-act="history" title="查看修改历史">已修改</button>' : '';
+    ? btn('history', '历史', 'class="mini" data-act="history" title="改过，点开看修改历史"') : '';
   return `<div class="card ${open ? 'expanded' : ''} ${focused === a.id ? 'active' : ''}" data-id="${a.id}">
     <div class="card-head">
       <span class="author">${esc(nameOf(a.author, a.authorName))}</span>
@@ -832,7 +921,7 @@ function cardHTML(a, replies) {
       <div class="card-main">
         <div class="text" data-act="expand" title="${open ? '点击收起' : '点击展开完整批注'}">${contentHTML(a.content, open, '（只有画面标注）')}${open ? '<div class="fold">收起</div>' : ''}</div>
         <div class="tc">${tc(a.content.frame)}</div>
-        <div class="actions">${a.canEdit ? '<button data-act="edit">修改</button><button data-act="delete" class="danger">删除</button>' : ''}<button data-act="reply">回复</button></div>
+        <div class="actions">${a.canEdit ? btn('edit', '修改', 'data-act="edit"') + btn('trash', '删除', 'data-act="delete" class="danger"') : ''}${btn('reply', '回复', 'data-act="reply"')}</div>
         <div class="history" hidden></div>
         ${replies.length ? `<div class="replies">${replies.map((r) => replyHTML(r, open)).join('')}</div>` : ''}
         ${replyDraft?.root === a.id ? replyBoxHTML() : ''}
@@ -846,7 +935,7 @@ function replyHTML(r, open) {
     <div class="reply-head"><span class="author">${esc(nameOf(r.author, r.authorName))}</span>
       <span class="muted">${fmtTime(r.created)}${r.history.length > 1 ? ' · 已修改' : ''}</span></div>
     <div class="text" data-act="expand">${contentHTML(r.content, open, '')}</div>
-    ${r.canEdit ? '<div class="actions"><button data-act="edit">修改</button><button data-act="delete" class="danger">删除</button></div>' : ''}
+    ${r.canEdit ? `<div class="actions">${btn('edit', '修改', 'data-act="edit"')}${btn('trash', '删除', 'data-act="delete" class="danger"')}</div>` : ''}
   </div>`;
 }
 
@@ -862,11 +951,11 @@ function orphanHTML(key, replies) {
 function replyBoxHTML() {
   const d = replyDraft;
   return `<div class="reply-box">
-    <textarea placeholder="写回复（可以直接粘贴图片），Ctrl+Enter 发送">${esc(d.text)}</textarea>
+    <textarea placeholder="写回复（输入 @ 提醒同事，可以直接粘贴图片），Ctrl+Enter 发送">${esc(d.text)}</textarea>
     ${d.atts.length ? `<div class="reply-atts">${d.atts.map((n, i) => `<div class="att"><img src="/api/images/${n}"><button data-rb="unatt" data-i="${i}" title="移除">×</button></div>`).join('')}</div>` : ''}
     <div class="row"><span class="error" id="rb-err"></span><span class="spacer"></span>
-      <label class="btn">添加图片<input type="file" accept="image/*" multiple hidden data-rb="file"></label>
-      <button data-rb="cancel">取消</button><button class="primary" data-rb="send">${d.edit ? '保存' : '发送'}</button></div>
+      <label class="btn" title="添加图片，也可以直接粘贴">${ico('image')}<span>图片</span><input type="file" accept="image/*" multiple hidden data-rb="file"></label>
+      ${btn('x', '取消', 'data-rb="cancel"')}${d.edit ? btn('save', '保存', 'class="primary" data-rb="send"') : btn('send', '发送', 'class="primary" data-rb="send"')}</div>
   </div>`;
 }
 
@@ -937,7 +1026,7 @@ $('#comment-list').addEventListener('click', async (e) => {
       return;
     }
     if (act === 'reply') {
-      if (replyDraft?.root !== root.id) replyDraft = { root: root.id, edit: null, text: '', atts: [] };
+      if (replyDraft?.root !== root.id) replyDraft = { root: root.id, edit: null, text: '', atts: [], mentions: [] };
       renderComments();
       $(`.card[data-id="${root.id}"] .reply-box textarea`)?.focus();
       return;
@@ -945,7 +1034,7 @@ $('#comment-list').addEventListener('click', async (e) => {
     if (act === 'edit') {
       if (a.replyTo) {
         // 回复就在卡片里改，不进画面标注编辑器
-        replyDraft = { root: a.replyTo, edit: a.id, text: a.content.text, atts: [...(a.content.attachments || [])] };
+        replyDraft = { root: a.replyTo, edit: a.id, text: a.content.text, atts: [...(a.content.attachments || [])], mentions: mentionsOf(a.content) };
         renderComments();
         $(`.card[data-id="${a.replyTo}"] .reply-box textarea`)?.focus();
         return;
@@ -993,8 +1082,9 @@ async function sendReply() {
     return;
   }
   try {
-    if (d.edit) await post(`/api/annotations/${d.edit}/edit`, { content: { text, attachments: d.atts } });
-    else await post('/api/annotations', { replyTo: d.root, content: { text, attachments: d.atts } });
+    const mentions = pickMentions(text, d.mentions);
+    if (d.edit) await post(`/api/annotations/${d.edit}/edit`, { content: { text, attachments: d.atts, mentions } });
+    else await post('/api/annotations', { replyTo: d.root, content: { text, attachments: d.atts, mentions } });
     replyDraft = null;
     await loadAnns();
   } catch (err) {
@@ -1010,6 +1100,7 @@ const addReplyImages = (files) => uploadImages(files, (name) => {
 
 $('#comment-list').addEventListener('input', (e) => {
   if (replyDraft && e.target.matches('.reply-box textarea')) replyDraft.text = e.target.value;
+  if (e.target.matches('.reply-box textarea')) onMentionInput(e.target);
 });
 $('#comment-list').addEventListener('change', (e) => {
   if (e.target.matches('[data-rb=file]')) {
@@ -1032,6 +1123,298 @@ $('#comment-list').addEventListener('keydown', (e) => {
   }
 });
 
+// ---------- @ 同事 ----------
+// 写批注、回复时输入 @ 弹出成员列表，选中后插入"@昵称 "，并记下这个人的设备 ID。
+// 发布时只留下文字里还在的 @（pickMentions），删掉"@昵称"就等于不 @ 了。
+
+const mentionPop = { el: $('#mention-pop'), ta: null, start: 0, items: [], sel: 0 };
+
+// mentionsOf 是修改批注时草稿里已有的 @：设备 ID 和现在的昵称
+const mentionsOf = (c) => (c?.mentions || []).map((id) => ({ id, name: rawName(id) })).filter((m) => m.name);
+const pickMentions = (text, picked) => [...new Set((picked || []).filter((m) => text.includes(`@${m.name}`)).map((m) => m.id))];
+const draftOf = (ta) => (ta.id === 'ed-text' ? editor : ta.closest('.reply-box') ? replyDraft : null);
+
+function onMentionInput(ta) {
+  const before = ta.value.slice(0, ta.selectionStart);
+  const m = before.match(/@([^\s@]{0,20})$/);
+  if (!m || !draftOf(ta)) { closeMention(); return; }
+  const q = m[1].toLowerCase();
+  // 在线的在前，名字开头就对上的在前
+  const items = (S.people || []).filter((p) => !p.keyMismatch && p.name.toLowerCase().includes(q))
+    .sort((a, b) => (b.online - a.online) || (b.name.toLowerCase().startsWith(q) - a.name.toLowerCase().startsWith(q)) || a.name.localeCompare(b.name, 'zh'))
+    .slice(0, 8);
+  if (!items.length) { closeMention(); return; }
+  Object.assign(mentionPop, { ta, start: before.length - m[0].length, items, sel: 0 });
+  renderMention();
+}
+
+function renderMention() {
+  const { el, ta, items, sel } = mentionPop;
+  el.innerHTML = items.map((p, i) => `<div class="mp-item ${i === sel ? 'sel' : ''}" data-i="${i}">
+    <span class="dot ${p.online ? 'on' : ''}"></span>${esc(p.name)}<span class="muted">${esc(p.code)}</span></div>`).join('');
+  el.hidden = false;
+  // 放在输入框下面，下面放不下就放上面
+  const r = ta.getBoundingClientRect();
+  const h = el.offsetHeight;
+  el.style.left = `${Math.max(8, Math.min(r.left, innerWidth - el.offsetWidth - 8))}px`;
+  el.style.top = `${r.bottom + 4 + h > innerHeight ? r.top - h - 4 : r.bottom + 4}px`;
+}
+
+function closeMention() {
+  mentionPop.el.hidden = true;
+  mentionPop.ta = null;
+}
+
+function pickMention(i) {
+  const { ta, start, items } = mentionPop;
+  const p = items[i];
+  const d = ta && draftOf(ta);
+  if (!p || !d) { closeMention(); return; }
+  const ins = `@${p.name} `;
+  ta.value = ta.value.slice(0, start) + ins + ta.value.slice(ta.selectionStart);
+  const caret = start + ins.length;
+  ta.setSelectionRange(caret, caret);
+  d.mentions = [...(d.mentions || []).filter((m) => m.id !== p.id), { id: p.id, name: p.name }];
+  if (d === replyDraft) replyDraft.text = ta.value;
+  closeMention();
+  ta.focus();
+}
+
+$('#ed-text').addEventListener('input', (e) => onMentionInput(e.target));
+// 捕获阶段处理，列表开着时上下键、回车、Tab、Esc 只给列表用（回车不换行，Ctrl+Enter 也不发送）
+document.addEventListener('keydown', (e) => {
+  if (mentionPop.el.hidden || e.target !== mentionPop.ta) return;
+  const n = mentionPop.items.length;
+  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+    mentionPop.sel = (mentionPop.sel + (e.key === 'ArrowDown' ? 1 : n - 1)) % n;
+    renderMention();
+  } else if (e.key === 'Enter' || e.key === 'Tab') {
+    pickMention(mentionPop.sel);
+  } else if (e.key === 'Escape') {
+    closeMention();
+  } else {
+    return;
+  }
+  e.preventDefault();
+  e.stopPropagation();
+}, true);
+mentionPop.el.addEventListener('mousedown', (e) => {
+  e.preventDefault(); // 不让输入框失去焦点
+  const item = e.target.closest('[data-i]');
+  if (item) pickMention(+item.dataset.i);
+});
+document.addEventListener('focusout', (e) => { if (e.target === mentionPop.ta) closeMention(); });
+
+// ---------- 提醒 ----------
+// 我的视频收到的批注、@ 我的、回复我的。程序从批注记录算出来（/api/inbox），已读状态记在本机。
+// 侧栏顶部"提醒"上是未读数；网页开着时新来的弹浏览器通知（网页在前台时只在页面上提示）。
+
+let inboxItems = [];
+let inboxKey = '';
+let inboxKnown = null;      // 已经见过的提醒，只给之后新来的弹通知；打开网页时已有的不弹
+let pendingFocus = null;    // 从提醒打开视频后，批注加载完要跳到哪一条
+let pendingInbox = false;   // 从托盘的"N 条新提醒"打开网页，设置好后打开提醒窗口
+
+const kindText = (it) => (it.kind === 'mention' ? (it.isReply ? '在回复里 @了你' : '@了你')
+  : it.kind === 'reply' ? '回复了你' : it.isReply ? '在你的视频里回复了' : '批注了你的视频');
+
+// inboxVideoName 是提醒里的视频名称：优先用现在列表里的（带版本号），找不到用批注里记的文件名
+function inboxVideoName(it) {
+  const lists = [S.mine || [], ...(S.peers || []).map((p) => p.videos || [])];
+  for (const l of lists) {
+    const v = l.find((x) => x.fp === it.video.fp);
+    if (v) return versionedName(v);
+  }
+  return it.video.name.replace(/\.[^.]+$/, '');
+}
+
+function inboxTC(it) {
+  const r = Math.round(it.video.fps > 0 ? it.video.fps : 25);
+  const s = Math.floor(it.frame / r);
+  return [Math.floor(s / 3600), Math.floor(s / 60) % 60, s % 60, it.frame % r].map(pad2).join(':');
+}
+
+async function checkInbox() {
+  const ib = S.inbox || {};
+  const badge = $('#btn-inbox .badge');
+  badge.hidden = !ib.unread;
+  badge.textContent = ib.unread > 99 ? '99+' : ib.unread;
+  $('#btn-inbox').title = ib.unread ? `${ib.unread} 条新提醒：我的视频收到的批注、@ 我的、回复我的` : '我的视频收到的批注、@ 我的、回复我的';
+  if (pendingInbox && S.configured && !modalKind) { pendingInbox = false; openInbox(); }
+  const key = `${ib.newest}|${ib.unread}`;
+  if (key === inboxKey) return;
+  inboxKey = key;
+  try { inboxItems = (await api('/api/inbox')).items || []; } catch { inboxKey = ''; return; }
+  if (inboxKnown === null) {
+    inboxKnown = new Set(inboxItems.map((it) => it.id));
+  } else {
+    const fresh = inboxItems.filter((it) => !inboxKnown.has(it.id));
+    fresh.forEach((it) => inboxKnown.add(it.id));
+    fresh.slice(0, 3).reverse().forEach(announce); // 一下子来很多时只弹最新的几条
+  }
+  if (modalKind === 'inbox') renderInboxList();
+}
+
+// announce 告诉用户来了新提醒：网页在后台时弹浏览器通知（点通知跳过去），在前台时页面上提示一下
+function announce(it) {
+  const title = `${personName(it.author, it.authorName)} ${kindText(it)}`;
+  if (!document.hidden && document.hasFocus()) {
+    if (!cur || cur.fp !== it.video.fp) toast(`${title}：${it.text}`);
+    return;
+  }
+  if (!('Notification' in window) || Notification.permission !== 'granted') return;
+  // tag 用记录 ID：开着几个标签页也只弹一次
+  const n = new Notification(title, { body: `${it.text}\n${inboxVideoName(it)} · ${inboxTC(it)}`, tag: it.id, icon: '/favicon.png' });
+  n.onclick = () => { window.focus(); n.close(); openInboxItem(it); };
+}
+
+function openInbox() {
+  openModal('inbox', `<h2>提醒</h2>
+    <div class="row"><span class="muted">我的视频收到的批注、@ 我的、回复我的</span><span class="spacer"></span><span id="ib-actions" class="row"></span></div>
+    <div id="inbox-list" class="inbox-list"></div>
+    <div class="modal-actions"><span class="error" id="ib-err"></span>${btn('x', '关闭', 'id="ib-close"')}</div>`);
+  $('#ib-close').onclick = closeModal;
+  $('#modal-box').onclick = async (e) => {
+    const act = e.target.closest('[data-ib]')?.dataset.ib;
+    const item = e.target.closest('.inbox-item');
+    try {
+      if (act === 'all') {
+        await post('/api/inbox/read', { all: true });
+        await refresh();
+      } else if (act === 'notify') {
+        await Notification.requestPermission();
+        renderInboxList();
+      } else if (item) {
+        const it = inboxItems.find((x) => x.id === item.dataset.id);
+        if (it) openInboxItem(it);
+      }
+    } catch (err) {
+      $('#ib-err').textContent = err.message;
+    }
+  };
+  renderInboxList();
+}
+
+function renderInboxList() {
+  const box = $('#inbox-list');
+  if (!box) return;
+  const unread = inboxItems.filter((it) => !it.read).length;
+  const canAsk = 'Notification' in window && Notification.permission === 'default';
+  const actions = (canAsk ? btn('bell', '通知', 'data-ib="notify" title="开启桌面通知：网页开着、在后台时，新提醒弹出系统通知"') : '')
+    + btn('check-all', '已读', `data-ib="all" title="全部标为已读" ${unread ? '' : 'disabled'}`);
+  if ($('#ib-actions').innerHTML !== actions) $('#ib-actions').innerHTML = actions;
+  const html = inboxItems.map((it) => `<div class="inbox-item ${it.read ? '' : 'unread'}" data-id="${esc(it.id)}">
+      <div class="ib-head"><b>${esc(personName(it.author, it.authorName))}</b><span>${kindText(it)}</span><span class="muted" title="${fmtTime(it.time)}">${fmtAgo(it.time)}</span></div>
+      <div class="ib-text">${esc(it.text)}</div>
+      <div class="muted ib-where">${esc(inboxVideoName(it))} · ${inboxTC(it)}</div>
+    </div>`).join('') || '<div class="muted pad">还没有提醒。同事批注你的视频、@ 你、回复你时会出现在这里。</div>';
+  if (box.dataset.html !== html) {
+    box.innerHTML = html;
+    box.dataset.html = html;
+  }
+}
+
+// openInboxItem 打开提醒对应的视频，批注加载完后跳到那一条（applyPendingFocus）
+function openInboxItem(it) {
+  post('/api/inbox/read', { ids: [it.id] }).then(refresh).catch(() => {});
+  if (modalKind === 'inbox') closeModal();
+  const v = it.video;
+  pendingFocus = { fp: v.fp, root: it.root, id: it.ann };
+  if (cur && cur.fp === v.fp) {
+    applyPendingFocus();
+    return;
+  }
+  // 原主人的列表里有就打开他的；没有的话找任何有这个视频的人（比如存着备份的同事）
+  const owners = [{ id: S.me.id, videos: S.mine || [] }, ...(S.peers || []).map((p) => ({ id: p.id, videos: p.videos || [] }))];
+  const hit = owners.find((o) => o.id === v.owner && o.videos.some((x) => x.fp === v.fp))
+    || owners.find((o) => o.videos.some((x) => x.fp === v.fp));
+  if (!selectVideo(hit?.id || v.owner, v.fp, v)) pendingFocus = null;
+}
+
+function applyPendingFocus() {
+  const p = pendingFocus;
+  if (!p || !cur || cur.fp !== p.fp || annVersion === null) return;
+  pendingFocus = null;
+  const root = anns.items.find((a) => a.id === p.root);
+  if (!root) {
+    toast('这条批注已经被作者删除了');
+    return;
+  }
+  expanded.add(root.id);
+  focusAnn(root.id);
+  renderComments();
+  const card = $(`.card[data-id="${root.id}"]`);
+  const target = (p.id !== p.root && card?.querySelector(`.reply[data-id="${p.id}"]`)) || card;
+  if (!target) return;
+  target.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  target.classList.remove('flash');
+  void target.offsetWidth; // 重新触发动画
+  target.classList.add('flash');
+}
+
+// readCurrentVideo 打开了一个视频、批注也加载出来了，这个视频的提醒就算看过（网页在后台时不算）
+function readCurrentVideo() {
+  if (!cur || document.hidden || !inboxItems.some((it) => !it.read && it.video.fp === cur.fp)) return;
+  const fp = cur.fp;
+  inboxItems.forEach((it) => { if (it.video.fp === fp) it.read = true; });
+  post('/api/inbox/read', { fp }).then(refresh).catch(() => {});
+}
+document.addEventListener('visibilitychange', () => { if (!document.hidden) readCurrentVideo(); });
+
+$('#btn-inbox').onclick = () => S?.configured && openInbox();
+
+// ---------- 成员 ----------
+
+function openPeople() {
+  openModal('people', `<h2>成员</h2>
+    <p class="muted">一台电脑就是一个人。同事打开程序后一般会自动出现，绿点表示在线。</p>
+    <div id="people-list" class="people-list"></div>
+    <div class="section">
+      <div class="section-title">按 IP 添加电脑 <span class="hint">（同事过一会儿还没出现，比如不在同一网段）</span></div>
+      <div class="add-peer"><input type="text" id="ap-addr" placeholder="对方电脑的 IP，例如 192.168.1.20">${btn('plus', '添加', 'class="primary" id="ap-ok" title="按 IP 添加电脑"')}</div>
+      <p class="muted">你的地址：${myAddrs()}</p>
+    </div>
+    <div class="modal-actions"><span class="error" id="ap-err"></span>${btn('x', '关闭', 'id="ap-close"')}</div>`);
+  $('#ap-close').onclick = closeModal;
+  const ok = async () => {
+    try {
+      const r = await post('/api/peers', { addr: $('#ap-addr').value });
+      $('#ap-addr').value = '';
+      $('#ap-err').textContent = '';
+      lastListKey = '';
+      await refresh();
+      toast(`已添加：${r.name}`);
+    } catch (e) {
+      $('#ap-err').textContent = e.message;
+    }
+  };
+  $('#ap-ok').onclick = ok;
+  $('#ap-addr').addEventListener('keydown', (e) => { if (e.key === 'Enter') ok(); });
+  renderPeopleList();
+}
+
+function renderPeopleList() {
+  const box = $('#people-list');
+  if (!box) return;
+  const row = (p, me) => {
+    const info = [];
+    if (me) info.push('本机');
+    else if (p.online) info.push(p.addr ? p.addr.replace(/:\d+$/, '') : '', '在线');
+    else info.push(p.lastSeen ? `${fmtAgo(p.lastSeen)}在线` : '只在批注里出现过');
+    if (p.version) info.push(p.version);
+    return `<div class="person"><span class="dot ${me || p.online ? 'on' : ''}"></span>
+      <b>${esc(me ? nameOf(S.me.id) : personName(p.id, p.name))}</b><span class="muted p-code">${esc(p.code)}</span>
+      <span class="muted p-info">${p.keyMismatch ? '<span class="warn">团队口令不一致</span> · ' : ''}${esc(info.filter(Boolean).join(' · '))}</span></div>`;
+  };
+  const html = row({ ...S.me, version: S.version }, true) + (S.people || []).map((p) => row(p, false)).join('');
+  if (box.dataset.html !== html) {
+    box.innerHTML = html;
+    box.dataset.html = html;
+  }
+}
+
+$('#btn-people').onclick = () => S?.configured && openPeople();
+
 // ---------- 分享视频链接 ----------
 // 链接指向对方自己电脑上的程序（localhost），打开后直接跳到这个视频的这个版本。
 
@@ -1047,7 +1430,7 @@ async function shareVideo() {
     toast('链接已复制，可以直接粘贴到飞书、微信');
   } catch {
     openModal('share', `<h2>复制分享链接</h2><textarea class="share-text" readonly>${esc(text)}</textarea>
-      <div class="modal-actions"><button class="primary" id="sh-ok">关闭</button></div>`);
+      <div class="modal-actions">${btn('x', '关闭', 'class="primary" id="sh-ok"')}</div>`);
     $('.share-text').select();
     $('#sh-ok').onclick = closeModal;
   }
@@ -1176,6 +1559,11 @@ async function exportAnnotations() {
 let pendingLink = null; // 打开的分享链接要跳到哪个视频
 
 function parseLink() {
+  if (location.hash === '#inbox') { // 托盘菜单里的"N 条新提醒"
+    pendingInbox = true;
+    history.replaceState(null, '', location.pathname);
+    return;
+  }
   const p = new URLSearchParams(location.hash.slice(1));
   if (!p.get('v')) return;
   pendingLink = { fp: p.get('v'), owner: p.get('o'), since: Date.now() };
@@ -1240,11 +1628,11 @@ $('#btn-resume').onclick = async () => {
 };
 
 // ---------- 自动更新 ----------
-// 程序在后台检查、下载新版本，下载好后在顶部提示，用户点"立即更新"才换上（程序会重启几秒钟）。
+// 程序在后台检查、下载新版本，下载好后在顶部提示，用户点"更新"才换上（程序会重启几秒钟）。
 
 let seenVersion = null; // 打开网页时程序的版本，变了说明程序已经换成新版本
 let updateLater = '';   // 点过"稍后"的版本，这次打开网页期间不再提示
-let updatingTo = '';    // 点了"立即更新"、正在等的版本
+let updatingTo = '';    // 点了"更新"、正在等的版本
 let updatingSince = 0;
 let updateBarKey = '';
 
@@ -1266,7 +1654,7 @@ function renderUpdate() {
       location.reload();
       return true;
     }
-    setUpdateBar(`程序已经更新到 ${S.version}。发布完手上的批注后，请刷新页面。`, '<button class="primary" data-act="reload">刷新页面</button>');
+    setUpdateBar(`程序已经更新到 ${S.version}。发布完手上的批注后，请刷新页面。`, btn('retry', '刷新', 'class="primary" data-act="reload" title="刷新页面"'));
     return false;
   }
   const u = S.update || {};
@@ -1275,13 +1663,13 @@ function renderUpdate() {
       ? `更新到 ${updatingTo} 好像没有完成。请退出程序后重新打开；还是不行的话，到配置文件夹的 log.txt 里看原因。`
       : `正在更新到 ${updatingTo}，程序会重启几秒钟，请稍候…`);
   } else if (u.ready && u.latest !== updateLater) {
-    const later = '<button data-act="later">稍后</button>';
+    const later = btn('clock', '稍后', 'data-act="later" title="这次打开网页期间不再提示"');
     if (u.blocked) {
       setUpdateBar(`新版本 ${u.latest} 已经下载好，但不能自动换上：${u.blocked}。`,
-        (u.download ? `<a class="btn" href="${esc(u.download)}" download>手动下载新版本</a>` : '') + later);
+        (u.download ? `<a class="btn" href="${esc(u.download)}" download title="手动下载新版本">${ico('download')}<span>下载</span></a>` : '') + later);
     } else {
       setUpdateBar(`新版本 ${u.latest} 已经下载好。更新时程序会重启几秒钟，正在看你视频的同事会短暂中断。`,
-        `<button class="primary" data-act="apply">立即更新</button>${later}`);
+        btn('update', '更新', 'class="primary" data-act="apply" title="立即更新，程序会重启几秒钟"') + later);
     }
   } else {
     $('#update-bar').hidden = true;
@@ -1289,7 +1677,7 @@ function renderUpdate() {
   return false;
 }
 
-// renderUpdateSettings 更新"软件配置"里程序版本那一行（窗口开着时每次轮询都会刷新）。
+// renderUpdateSettings 更新"设置"里程序版本那一行（窗口开着时每次轮询都会刷新）。
 function renderUpdateSettings() {
   const box = $('#su-update');
   if (!box) return;
@@ -1302,13 +1690,13 @@ function renderUpdateSettings() {
     status = `正在更新到 ${updatingTo}…`;
   } else if (u.ready) {
     status = `新版本 ${u.latest} 已经下载好${u.blocked ? `，但不能自动换上：${u.blocked}` : ''}`;
-    if (!u.blocked) buttons = '<button class="primary" data-act="apply">立即更新</button>';
-    else if (u.download) buttons = `<a class="btn" href="${esc(u.download)}" download>手动下载新版本</a>`;
+    if (!u.blocked) buttons = btn('update', '更新', 'class="primary" data-act="apply" title="立即更新，程序会重启几秒钟"');
+    else if (u.download) buttons = `<a class="btn" href="${esc(u.download)}" download title="手动下载新版本">${ico('download')}<span>下载</span></a>`;
   } else {
     if (u.busy) status = `${u.busy}…`;
     else if (u.error) status = u.error;
     else status = u.checked ? `已是最新（${fmtTime(u.checked)} 检查过）` : '已是最新';
-    buttons = `<button data-act="check" ${u.busy ? 'disabled' : ''}>检查更新</button>`;
+    buttons = btn('search', '检查', `data-act="check" title="检查更新" ${u.busy ? 'disabled' : ''}`);
   }
   const html = `<span>${esc(S.version)}</span><span class="muted">${esc(status)}</span><span class="spacer"></span>${buttons}`;
   if (box.dataset.html !== html) {
@@ -1351,7 +1739,7 @@ async function updateAction(e) {
 }
 $('#update-actions').onclick = updateAction;
 
-// ---------- 弹窗：软件配置、添加用户、使用说明 ----------
+// ---------- 弹窗：设置、使用说明 ----------
 
 function openModal(kind, html) {
   modalKind = kind;
@@ -1371,10 +1759,10 @@ function closeModal() {
 
 // askConfirm 是程序里自己的确认窗口（比浏览器自带的确认框清楚），点确认返回 true，取消或点外面返回 false。
 let confirmResolve = null;
-function askConfirm(title, body, okText) {
+function askConfirm(title, body, okText, okIcon = 'trash', okTitle = '') {
   return new Promise((resolve) => {
     openModal('confirm', `<h2>${esc(title)}</h2><p class="confirm-body">${esc(body)}</p>
-      <div class="modal-actions"><button id="cf-no">取消</button><button class="danger-solid" id="cf-yes">${esc(okText)}</button></div>`);
+      <div class="modal-actions">${btn('x', '取消', 'id="cf-no"')}${btn(okIcon, esc(okText), `class="danger-solid" id="cf-yes" title="${esc(okTitle || okText)}"`)}</div>`);
     confirmResolve = resolve;
     $('#cf-no').onclick = closeModal;
     $('#cf-yes').onclick = () => {
@@ -1419,13 +1807,13 @@ function mountPicker(id, start, errEl) {
   return st;
 }
 
-// openSetup 是"软件配置"（第一次打开时是欢迎页）：基本信息、目录位置、开关、本机信息。
+// openSetup 是"设置"（第一次打开时是欢迎页）：基本信息、目录位置、开关、本机信息。
 // 用户名、团队口令、共享目录点"保存"才生效；开关改了立即生效，第一次设置时不显示。
 function openSetup(first) {
   const ips = (S?.addrs || []).map((a) => `<code>${esc(a)}</code>`).join(' ') || '<span class="muted">没有检测到局域网地址</span>';
   // 说明尽量放在鼠标悬停的提示里，界面上只留名字
   openModal(first ? 'setup-first' : 'setup', `
-    <h2>${first ? '欢迎使用局域网审片' : '软件配置'}</h2>
+    <h2>${first ? '欢迎使用局域网审片' : '设置'}</h2>
     ${first ? '<p class="muted">视频留在各自电脑上，同事通过局域网直接看原片、写批注。</p>' : ''}
     <div class="section-title">基本信息</div>
     <div class="field-row">
@@ -1454,7 +1842,7 @@ function openSetup(first) {
       <div class="info-row"><span class="muted">程序版本</span>${first ? `<span>${esc(S?.version || '')}</span>` : '<div class="row" id="su-update"></div>'}</div>
     </div>
     <div class="modal-actions"><span class="error" id="su-err"></span>
-      ${first ? '' : '<button id="su-cancel">取消</button>'}<button class="primary" id="su-ok">${first ? '开始使用' : '保存'}</button></div>`);
+      ${first ? '' : btn('x', '取消', 'id="su-cancel"')}${first ? btn('start', '开始', 'class="primary" id="su-ok" title="开始使用"') : btn('save', '保存', 'class="primary" id="su-ok"')}</div>`);
   const share = mountPicker('su-picker', S?.shareDir || '', $('#su-err'));
   $('#su-cancel')?.addEventListener('click', closeModal);
   $('#su-update')?.addEventListener('click', updateAction);
@@ -1489,30 +1877,6 @@ function openSetup(first) {
   });
 }
 
-function openAddPeer() {
-  openModal('peer', `
-    <h2>添加用户</h2>
-    <p class="muted">同事一般会自动出现；过一会儿还没出现（比如不在同一网段），输入对方电脑的 IP。</p>
-    <div class="field"><label>对方的 IP 地址</label><input type="text" id="ap-addr" placeholder="例如 192.168.1.20"></div>
-    <p class="muted">你的地址：${myAddrs()}</p>
-    <div class="modal-actions"><span class="error" id="ap-err"></span><button id="ap-cancel">取消</button><button class="primary" id="ap-ok">添加</button></div>`);
-  $('#ap-cancel').onclick = closeModal;
-  const ok = async () => {
-    try {
-      const r = await post('/api/peers', { addr: $('#ap-addr').value });
-      closeModal();
-      lastListKey = '';
-      await refresh();
-      alert(`已添加：${r.name}`);
-    } catch (e) {
-      $('#ap-err').textContent = e.message;
-    }
-  };
-  $('#ap-ok').onclick = ok;
-  $('#ap-addr').addEventListener('keydown', (e) => { if (e.key === 'Enter') ok(); });
-  $('#ap-addr').focus();
-}
-
 function openHelp() {
   openModal('help', `
     <h2>使用说明</h2>
@@ -1523,25 +1887,32 @@ function openHelp() {
     </ul>
     <h3>批注</h3>
     <ul>
-      <li>暂停到那一帧，点"批注这一帧"（C），画标注、写文字、贴图，再点"发布批注"。</li>
+      <li>暂停到那一帧，点"批注"（C），画标注、写文字、贴图，再点"发布"。</li>
+      <li>输入 @ 选同事，对方会收到提醒。</li>
       <li>点批注的缩略图或时间码跳到那一帧。自己的批注能改、能删，每条都能回复。</li>
-      <li>"导出批注"把当前版本的批注存成网页，可打印成 PDF。</li>
+      <li>"导出"把当前版本的批注存成网页，可打印成 PDF。</li>
+    </ul>
+    <h3>提醒</h3>
+    <ul>
+      <li>左上角"提醒"：你的视频收到的批注、@ 你的、回复你的，红色数字是未读数。点一条直接跳到那条批注。</li>
+      <li>在提醒里点"通知"开启桌面通知，网页开着、在后台时也会弹出。</li>
     </ul>
     <h3>视频</h3>
     <ul>
-      <li>给同事看的视频放进共享文件夹的"分享"（"我的视频"旁点"打开文件夹"）。</li>
-      <li>名字相近的新文件会问是不是新版本；自己的视频能"改名""调整版本"。</li>
-      <li>"分享视频"复制一条链接，同事点开直接看这个视频。</li>
+      <li>给同事看的视频放进共享文件夹的"分享"（"我的视频"旁点"文件"）。</li>
+      <li>名字相近的新文件会问是不是新版本；自己的视频能"改名"、调"版本"。</li>
+      <li>"分享"复制一条链接，同事点开直接看这个视频。</li>
     </ul>
     <h3>从同事那里拿文件</h3>
     <ul>
-      <li>点同事名字旁的"文件"勾选下载，或选中视频点"备份视频"，存到你的"备份"里。</li>
-      <li>后台下载，断了会接着下；进度在左边列表底部，不要的可以删除（移到${S?.os === 'windows' ? '回收站' : '废纸篓'}）。</li>
+      <li>点同事名字旁的"文件"勾选下载，或选中视频点"备份"，存到你的"备份"里。</li>
+      <li>后台下载，断了会接着下；左上角"下载"看进度，不要的可以删除（移到${S?.os === 'windows' ? '回收站' : '废纸篓'}）。</li>
       <li>拿来的视频是原主人视频的备份，原主人不在时同事也能从你这里看。</li>
     </ul>
-    <h3>让同事加入</h3>
+    <h3>成员</h3>
     <ul>
-      <li>同事用浏览器打开 ${myAddrs()} 下载程序，双击运行，允许防火墙和本地网络访问。</li>
+      <li>右上角"成员"列出团队里的人，一台电脑就是一个人。同事没自动出现时，在这里按 IP 添加。</li>
+      <li>新同事用浏览器打开 ${myAddrs()} 下载程序，双击运行，允许防火墙和本地网络访问。</li>
     </ul>
     <h3>注意</h3>
     <ul>
@@ -1550,7 +1921,7 @@ function openHelp() {
       <li>只能播放 H.264 等常见编码，ProRes 不行。</li>
       <li>"批注"文件夹会自动同步，不要手动改动。</li>
     </ul>
-    <div class="modal-actions"><button class="primary" id="help-ok">知道了</button></div>`);
+    <div class="modal-actions">${btn('check', '好的', 'class="primary" id="help-ok"')}</div>`);
   $('#help-ok').onclick = closeModal;
 }
 
@@ -1571,7 +1942,7 @@ async function openFiles(peerId, dir) {
       <div class="crumbs" id="fl-crumbs"></div>
       <div class="file-list" id="fl-list"></div>
       <p class="muted">存到你共享文件夹的"备份/${esc(peer.name)}"里。视频会成为备份，${esc(peer.name)}不在时同事也能从你这里看。</p>
-      <div class="modal-actions"><span class="error" id="fl-err"></span><button id="fl-close">关闭</button><button class="primary" id="fl-ok" disabled>下载</button></div>`);
+      <div class="modal-actions"><span class="muted" id="fl-sum"></span><span class="error" id="fl-err"></span>${btn('x', '关闭', 'id="fl-close"')}${btn('download', '下载', 'class="primary" id="fl-ok" disabled title="下载勾选的文件和文件夹"')}</div>`);
     $('#fl-close').onclick = closeModal;
     $('#fl-ok').onclick = startDownload;
     $('#fl-crumbs').onclick = (e) => {
@@ -1618,8 +1989,8 @@ function renderFileSel() {
   const dirs = items.filter((f) => f.dir).length;
   const bytes = items.reduce((n, f) => n + (f.dir ? 0 : f.size), 0);
   $('#fl-ok').disabled = !items.length;
-  $('#fl-ok').textContent = !items.length ? '下载'
-    : `下载 ${items.length} 项${dirs ? `（含 ${dirs} 个文件夹）` : `（${fmtBytes(bytes)}）`}`;
+  $('#fl-sum').textContent = !items.length ? ''
+    : `已选 ${items.length} 项${dirs ? `（含 ${dirs} 个文件夹）` : `（${fmtBytes(bytes)}）`}`;
 }
 
 async function startDownload() {
@@ -1635,7 +2006,7 @@ async function startDownload() {
   }
   closeModal();
   await refresh();
-  toast(`开始下载 ${paths.length} 项，左边列表底部能看进度`);
+  toast(`开始下载 ${paths.length} 项，点左上角"下载"能看进度`);
 }
 
 const dlStates = {
@@ -1652,20 +2023,17 @@ function fmtLeft(sec) {
 
 let dlSeen = null; // 已经提示过"下载完了"的下载
 
-// renderDownloads 在每次轮询时更新：顶栏"下载"上的数字、下载完的提示、开着的下载列表、第一次提示开放文件。
+// renderDownloads 在每次轮询时更新：侧栏顶部"下载"上的数字、下载完的提示、开着的下载列表、第一次提示开放文件。
 function renderDownloads() {
   const list = S.downloads || [];
   const active = list.filter(dlActive).length;
-  // 侧栏底部的下载条：有下载记录就显示；全部结束、清除以后就没了
+  // 侧栏顶部的"下载"：下载中的是蓝色数字，没下载成功的是红色数字
   const failed = list.filter((d) => d.state === 'failed' || d.state === 'partial').length;
-  const strip = $('#dl-strip');
-  strip.hidden = !list.length;
-  strip.className = active ? '' : failed ? 'failed' : 'idle';
-  const html = active ? `下载中 <span class="badge">${active}</span> 项` : failed ? `${failed} 项没下载成功` : '下载记录';
-  if (strip.dataset.html !== html) {
-    strip.innerHTML = `${html}<span class="spacer"></span>查看`;
-    strip.dataset.html = html;
-  }
+  const badge = $('#btn-downloads .badge');
+  badge.hidden = !active && !failed;
+  badge.className = `badge ${active ? 'blue' : ''}`;
+  badge.textContent = active || failed;
+  $('#btn-downloads').title = active ? `下载中 ${active} 项，点开看进度` : failed ? `${failed} 项没下载成功，点开看看` : '从同事那里拿的文件';
   // 刚打开网页时已经下完的不再提示
   if (dlSeen === null) dlSeen = new Set(list.filter((d) => d.doneAt).map((d) => d.id));
   const done = list.filter((d) => d.doneAt && !dlSeen.has(d.id));
@@ -1675,13 +2043,14 @@ function renderDownloads() {
     const ok = fresh.state === 'done';
     const more = done.length > 1 ? `等 ${done.length} 项` : '';
     $('#dl-done-text').textContent = ok ? `已从 ${fresh.peerName} 拿到「${fresh.name}」${more}` : `从 ${fresh.peerName} 拿「${fresh.name}」${dlStates[fresh.state]}`;
-    $('#dl-done-actions').innerHTML = `<button class="primary" data-dl-act="reveal" data-id="${esc(fresh.id)}">${ok ? '打开所在文件夹' : '看看'}</button><button data-dl-act="hide">关闭</button>`;
+    $('#dl-done-actions').innerHTML = (ok ? btn('open', '打开', `class="primary" data-dl-act="reveal" data-id="${esc(fresh.id)}" title="打开所在文件夹"`)
+      : btn('search', '查看', `class="primary" data-dl-act="reveal" data-id="${esc(fresh.id)}" title="打开所在文件夹看看"`)) + btn('x', '关闭', 'data-dl-act="hide"');
     $('#dl-done-bar').hidden = false;
   }
   $('#fileshare-bar').hidden = !S.fileShareNotice;
   if (S.fileShareNotice) {
     const text = '共享文件夹分成了三个子文件夹："分享"放给同事看的视频和文件，"备份"放从同事那里拿的东西，"批注"放批注（不要手动删改）。'
-      + (S.layoutNote || '') + (S.fileShare ? '共享文件夹里的文件同事都能浏览和下载，只能拿，不能改、不能删；不想开放可以在"软件配置"里关掉。' : '');
+      + (S.layoutNote || '') + (S.fileShare ? '共享文件夹里的文件同事都能浏览和下载，只能拿，不能改、不能删；不想开放可以在"设置"里关掉。' : '');
     if ($('#fileshare-text').textContent !== text) $('#fileshare-text').textContent = text;
   }
   if (modalKind === 'downloads') renderDownloadList();
@@ -1689,9 +2058,9 @@ function renderDownloads() {
 
 function openDownloads() {
   openModal('downloads', `<h2>下载</h2>
-    <div class="row"><span class="muted">存在共享文件夹的"备份"里，按来源分文件夹</span><span class="spacer"></span><button data-dl-act="open-dir">打开文件夹</button></div>
+    <div class="row"><span class="muted">存在共享文件夹的"备份"里，按来源分文件夹</span><span class="spacer"></span>${btn('folder', '打开', 'data-dl-act="open-dir" title="打开“备份”文件夹"')}</div>
     <div id="dl-list" class="dl-list"></div>
-    <div class="modal-actions"><span class="error" id="dl-err"></span><button data-dl-act="clear">清除已结束的</button><button class="primary" id="dl-close">关闭</button></div>`);
+    <div class="modal-actions"><span class="error" id="dl-err"></span>${btn('clear', '清除', 'data-dl-act="clear" title="清除已结束的下载记录（文件不删）"')}${btn('x', '关闭', 'class="primary" id="dl-close"')}</div>`);
   $('#dl-close').onclick = closeModal;
   $('#modal-box').onclick = dlAction;
   renderDownloadList();
@@ -1705,10 +2074,11 @@ function renderDownloadList() {
     if (d.dir) info.push(`${d.done} / ${d.files} 个文件`);
     if (d.state === 'running' && d.speed > 0) info.push(`${fmtBytes(Math.round(d.speed))}/秒`, `还要 ${fmtLeft((d.size - d.got) / d.speed)}`);
     const btns = [];
-    if (dlActive(d)) btns.push(`<button data-dl-act="cancel" data-id="${esc(d.id)}">取消</button>`);
-    if (['failed', 'partial', 'canceled'].includes(d.state)) btns.push(`<button data-dl-act="retry" data-id="${esc(d.id)}">重试</button>`);
-    if (d.state !== 'canceled') btns.push(`<button data-dl-act="reveal" data-id="${esc(d.id)}">打开所在文件夹</button>`);
-    if (!dlActive(d)) btns.push(`<button class="danger" data-dl-act="delete" data-id="${esc(d.id)}">删除</button>`);
+    const id = `data-id="${esc(d.id)}"`;
+    if (dlActive(d)) btns.push(btn('x', '取消', `data-dl-act="cancel" ${id} title="取消下载"`));
+    if (['failed', 'partial', 'canceled'].includes(d.state)) btns.push(btn('retry', '重试', `data-dl-act="retry" ${id}`));
+    if (d.state !== 'canceled') btns.push(btn('open', '打开', `data-dl-act="reveal" ${id} title="打开所在文件夹"`));
+    if (!dlActive(d)) btns.push(btn('trash', '删除', `class="danger" data-dl-act="delete" ${id} title="拿来的文件移到${S.os === 'windows' ? '回收站' : '废纸篓'}，这条记录也删掉"`));
     const errs = [d.err, ...(d.failed || [])].filter(Boolean);
     return `<div class="dl-item ${d.state}">
       <div class="row"><b class="dl-name">${d.dir ? '📁' : '📄'} ${esc(d.name)}</b><span class="muted">来自 ${esc(d.peerName)}</span><span class="spacer"></span><span class="dl-state">${dlStates[d.state] || d.state}</span></div>
@@ -1752,7 +2122,7 @@ async function deleteDownload(id) {
   let body = !d.done ? '还没有下载到文件，只删掉这条下载记录。'
     : `${d.dir ? `文件夹「${d.name}」里已经下好的 ${d.done} 个文件` : `「${d.name}」`}会移到${trash}，需要时可以从${trash}里找回来。这条下载记录也一起删掉。`;
   if (d.fp && d.done) body += `\n\n这是 ${d.peerName} 的视频的备份，删除后，${d.peerName} 不在时同事就不能从你这里看这个视频了。`;
-  const ok = await askConfirm('删除下载的文件', body, d.done ? `移到${trash}` : '删除记录');
+  const ok = await askConfirm('删除下载的文件', body, '删除', 'trash', d.done ? `移到${trash}` : '删除记录');
   let err = '';
   if (ok) {
     try {
@@ -1778,9 +2148,9 @@ async function backupVideo() {
   }
   lastListKey = '';
   await refresh();
-  toast(`开始备份，存到你共享文件夹的"备份/${cur.ownerName}"里，左边列表底部能看进度`);
+  toast(`开始备份，存到你共享文件夹的"备份/${cur.ownerName}"里，点左上角"下载"能看进度`);
 }
-$('#dl-strip').onclick = () => S?.configured && openDownloads();
+$('#btn-downloads').onclick = () => S?.configured && openDownloads();
 
 // 从 0.3.x 更新上来的用户，提示一次共享文件夹里的文件同事都能下载了
 $('#fileshare-actions').onclick = async (e) => {
@@ -1796,7 +2166,6 @@ $('#fileshare-actions').onclick = async (e) => {
   if (act === 'settings') openSetup(false);
 };
 
-$('#btn-add-peer').onclick = () => S?.configured && openAddPeer();
 $('#btn-help').onclick = () => S?.configured && openHelp();
 $('#btn-settings').onclick = () => S?.configured && openSetup(false);
 

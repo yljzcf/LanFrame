@@ -18,12 +18,23 @@ body {
   font: 14px/1.5 -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", "Segoe UI", sans-serif;
   display: flex; flex-direction: column;
 }
+/* 按钮一律是"图标 + 两个字"，完整意思写在 title 里 */
 button, .btn {
   background: var(--panel-2); color: var(--text); border: 1px solid var(--line);
   border-radius: 6px; padding: 5px 12px; font: inherit; cursor: pointer;
+  display: inline-flex; align-items: center; gap: 5px; white-space: nowrap;
 }
 button:hover, .btn:hover { border-color: #4a4e57; }
-.btn { display: inline-block; text-decoration: none; }
+.btn { text-decoration: none; }
+.ico {
+  width: 15px; height: 15px; flex: none;
+  fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round;
+}
+.ico.spin { animation: spin 1s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+/* 小按钮：侧栏分组标题、控制栏的改名和版本、批注卡片里的按钮 */
+button.mini { padding: 1px 7px; font-size: 12px; gap: 4px; }
+button.mini .ico { width: 13px; height: 13px; }
 button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
 button.danger { color: var(--danger); }
 button.danger-solid { background: var(--danger); border-color: var(--danger); color: #fff; }
@@ -49,11 +60,9 @@ input[type=text], textarea {
 #main { flex: 1; display: flex; min-height: 0; }
 #sidebar { width: clamp(170px, 20vw, 260px); flex: none; border-right: 1px solid var(--line); display: flex; flex-direction: column; background: var(--panel); }
 #video-list { flex: 1; overflow-y: auto; min-height: 0; }
-/* 侧栏底部的"下载中 N 项" */
-#dl-strip { flex: none; display: flex; align-items: center; gap: 6px; padding: 8px 12px; border-top: 1px solid var(--line); font-size: 12px; cursor: pointer; }
-#dl-strip:hover { background: var(--panel-2); }
-#dl-strip.failed { color: var(--danger); }
-#dl-strip.idle { color: var(--muted); }
+/* 侧栏顶部常驻的"提醒""下载"，视频列表滚动时不动 */
+#side-top { flex: none; display: flex; gap: 6px; padding: 8px 10px; border-bottom: 1px solid var(--line); }
+#side-top button { flex: 1; justify-content: center; padding: 4px 8px; }
 #comments { width: clamp(240px, 28vw, 380px); flex: none; border-left: 1px solid var(--line); display: flex; flex-direction: column; background: var(--panel); }
 #stage { flex: 1; display: flex; flex-direction: column; min-width: 0; padding: 12px; }
 /* 窗口太窄时改成上下排列：视频列表、播放器、批注 */
@@ -82,12 +91,13 @@ input[type=text], textarea {
 .video-item .sub-note { font-size: 11px; color: var(--muted); line-height: 1.3; }
 .video-item .ver { font-size: 11px; color: var(--muted); }
 .video-item.sub { padding-left: 40px; font-size: 12px; color: var(--muted); }
-/* 当前视频名下面的"备份视频""分享视频""导出批注"，侧栏窄时换行 */
+/* 当前视频名下面的"备份""分享""导出"，侧栏窄时换行 */
 .video-tools { display: flex; flex-wrap: wrap; gap: 6px; padding: 4px 12px 8px 26px; background: #2b3a52; }
-.video-tools button { padding: 2px 8px; font-size: 12px; white-space: nowrap; }
+.video-tools button { padding: 2px 8px; font-size: 12px; gap: 4px; }
 .video-item.sub.active { color: var(--text); }
 .video-item.missing .name { text-decoration: line-through; text-decoration-color: #666; }
-.badge { font-size: 11px; background: var(--danger); color: #fff; border-radius: 8px; padding: 0 6px; }
+.badge { font-size: 11px; line-height: 16px; background: var(--danger); color: #fff; border-radius: 8px; padding: 0 6px; }
+.badge.blue { background: var(--accent); }
 .tag { font-size: 11px; color: var(--warn); border: 1px solid var(--warn); border-radius: 8px; padding: 0 5px; }
 #version-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 0 0 8px; padding: 6px 10px; border-radius: 6px; background: #3a3220; color: var(--warn); font-size: 12px; }
 #version-bar button { padding: 2px 10px; font-size: 12px; }
@@ -123,7 +133,7 @@ a { color: var(--accent); }
 .toggle { display: flex; gap: 8px; align-items: flex-start; margin-bottom: 8px; }
 .toggle input { margin-top: 4px; }
 .share-text { width: 100%; height: 110px; font-size: 12px; }
-/* 软件配置：每一块的小标题；用户名和口令一行；两个开关一行；"本机信息"的几行 */
+/* 设置：每一块的小标题；用户名和口令一行；两个开关一行；"本机信息"的几行 */
 .section-title { font-weight: 600; margin-bottom: 8px; }
 .hint { font-weight: normal; font-size: 12px; color: var(--muted); }
 .field-row { display: flex; flex-wrap: wrap; gap: 8px 20px; margin-bottom: 4px; }
@@ -162,7 +172,8 @@ a { color: var(--accent); }
 .ctl-left { display: flex; flex-direction: column; min-width: 0; }
 #video-title { display: flex; flex-wrap: wrap; align-items: baseline; column-gap: 8px; min-width: 0; }
 #video-title .vname { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
-#video-title button.link { flex: none; }
+#video-title { row-gap: 2px; }
+#video-title button.mini { flex: none; align-self: center; }
 #video-sub { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ctl-mid { display: flex; flex-direction: column; align-items: center; text-align: center; }
 .ctl-right { display: flex; justify-content: flex-end; gap: 6px; }
@@ -195,7 +206,6 @@ a { color: var(--accent); }
 .card.active { background: #2b3a52; }
 .card-head { display: flex; gap: 8px; align-items: baseline; font-size: 12px; margin-bottom: 6px; }
 .card-head .author { font-weight: 600; font-size: 13px; }
-button.link { background: none; border: none; padding: 0; color: var(--accent); font-size: 12px; }
 .card-body { display: grid; grid-template-columns: clamp(80px, 38%, 120px) 1fr; gap: 10px; align-items: start; }
 /* 横屏截图占满左栏宽度；竖屏截图限制高度，和右栏一样高 */
 .thumb { display: flex; justify-content: center; }
@@ -217,7 +227,14 @@ button.link { background: none; border: none; padding: 0; color: var(--accent); 
 .card .atts { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; white-space: normal; }
 .card .atts img { height: 64px; border-radius: 4px; display: block; }
 .card .actions { display: flex; gap: 4px; flex-wrap: wrap; justify-content: flex-end; }
-.card .actions button { padding: 2px 8px; font-size: 12px; }
+.card .actions button { padding: 2px 8px; font-size: 12px; gap: 4px; }
+.card .actions .ico, .reply-box .ico, .video-tools .ico, .dl-item .ico { width: 13px; height: 13px; }
+/* 从提醒跳过来的批注或回复，闪一下 */
+.card.flash, .reply.flash { animation: flash 2.4s ease-out; }
+@keyframes flash { 0%, 30% { background: #3d4f6e; } 100% { background: transparent; } }
+/* 批注里 @ 的人；@ 我的更醒目 */
+.at { color: #7cb8ff; }
+.at.me { color: #fff; background: #2f5c96; border-radius: 3px; padding: 0 2px; }
 /* 回复放在卡片右栏、原批注下面，和批注文字左对齐，像聊天里的回复；回复之间用虚线隔开 */
 .replies { margin-top: 8px; padding-left: 10px; border-left: 2px solid var(--line); display: flex; flex-direction: column; }
 .reply + .reply { margin-top: 10px; padding-top: 10px; border-top: 1px dashed var(--line); }
@@ -289,3 +306,35 @@ button.link { background: none; border: none; padding: 0; color: var(--accent); 
 @media (max-width: 600px) { .file-row .ftime { display: none; } }
 .modal-actions .error { flex: 1; }
 code { background: var(--bg); padding: 1px 6px; border-radius: 4px; }
+
+/* 提醒窗口 */
+.inbox-list { margin-top: 10px; max-height: 62vh; overflow-y: auto; border-top: 1px solid var(--line); }
+.inbox-item { padding: 9px 4px 9px 18px; border-bottom: 1px solid var(--line); cursor: pointer; position: relative; }
+.inbox-item:hover { background: var(--panel-2); }
+.inbox-item.unread::before { content: ""; position: absolute; left: 5px; top: 16px; width: 7px; height: 7px; border-radius: 50%; background: var(--danger); }
+.inbox-item .ib-head { display: flex; gap: 6px; align-items: baseline; font-size: 13px; }
+.inbox-item .ib-head .muted { margin-left: auto; font-size: 12px; white-space: nowrap; }
+.inbox-item:not(.unread) .ib-head b { font-weight: normal; }
+.inbox-item .ib-text { margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.inbox-item .ib-where { font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.inbox-item.unread .ib-text { color: var(--text); }
+.inbox-item:not(.unread) .ib-text { color: var(--muted); }
+
+/* 成员窗口 */
+.people-list { border-top: 1px solid var(--line); max-height: 46vh; overflow-y: auto; }
+.person { display: flex; align-items: center; gap: 8px; padding: 7px 4px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+.person .p-code { font-size: 12px; }
+.person .p-info { margin-left: auto; font-size: 12px; text-align: right; }
+.person .warn { color: var(--warn); }
+.add-peer { display: flex; gap: 8px; align-items: center; }
+.add-peer input { flex: 1; }
+
+/* 输入 @ 时弹出的成员列表 */
+#mention-pop {
+  position: fixed; z-index: 90; min-width: 180px; max-width: 280px; max-height: 240px; overflow-y: auto;
+  background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px; padding: 4px;
+  box-shadow: 0 6px 20px rgba(0,0,0,.45);
+}
+.mp-item { display: flex; align-items: center; gap: 8px; padding: 5px 8px; border-radius: 5px; cursor: pointer; }
+.mp-item .muted { margin-left: auto; font-size: 11px; }
+.mp-item.sel, .mp-item:hover { background: #2b3a52; }

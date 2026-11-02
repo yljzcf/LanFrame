@@ -37,6 +37,7 @@ type Content struct {
 	Strokes     []Stroke `json:"strokes,omitempty"`
 	Shot        string   `json:"shot,omitempty"`
 	Attachments []string `json:"attachments,omitempty"`
+	Mentions    []string `json:"mentions,omitempty"` // @ 了谁：设备 ID
 }
 
 type VideoRef struct {
@@ -183,6 +184,11 @@ func validateRecord(r *Record) error {
 		for _, name := range append([]string{r.Content.Shot}, r.Content.Attachments...) {
 			if name != "" && !reImageName.MatchString(name) {
 				return errors.New("图片名不对")
+			}
+		}
+		for _, id := range r.Content.Mentions {
+			if !ValidDeviceID(id) {
+				return errors.New("@ 的人不对")
 			}
 		}
 	}

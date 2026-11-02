@@ -99,7 +99,8 @@ input[type=text], textarea {
 .badge { font-size: 11px; line-height: 16px; background: var(--danger); color: #fff; border-radius: 8px; padding: 0 6px; }
 .badge.blue { background: var(--accent); }
 .tag { font-size: 11px; color: var(--warn); border: 1px solid var(--warn); border-radius: 8px; padding: 0 5px; }
-#version-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 0 0 8px; padding: 6px 10px; border-radius: 6px; background: #3a3220; color: var(--warn); font-size: 12px; }
+#version-bar { display: flex; flex-direction: column; gap: 6px; margin: 0 0 8px; padding: 6px 10px; border-radius: 6px; background: #3a3220; color: var(--warn); font-size: 12px; }
+#version-bar .vb-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 #version-bar button { padding: 2px 10px; font-size: 12px; }
 select { background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 6px 10px; font: inherit; width: 100%; }
 .section { border-top: 1px solid var(--line); margin-top: 16px; padding-top: 12px; }

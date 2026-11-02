@@ -46,7 +46,8 @@ function fmtTime(ms) {
 }
 const round4 = (x) => Math.round(Math.min(1, Math.max(0, x)) * 10000) / 10000;
 // 按钮一律是"图标 + 两个字"，图标在 index.html 的 <symbol> 里；完整意思写在 title 里
-const ico = (name, cls = '') => `<svg class="ico ${cls}"><use href="#i-${name}"/></svg>`;
+// 写成和 innerHTML 读回来一样的形式（</use> 闭合、class 没有多余空格），比较 innerHTML 时才不会每次轮询都重画
+const ico = (name, cls = '') => `<svg class="${cls ? `ico ${cls}` : 'ico'}"><use href="#i-${name}"></use></svg>`;
 const btn = (icon, text, attrs = '') => `<button ${attrs}>${ico(icon)}<span>${text}</span></button>`;
 function setBtn(el, icon, text) {
   const html = `${ico(icon)}<span>${text}</span>`;
@@ -118,7 +119,7 @@ async function refresh() {
   } else if (cur) {
     // 版本信息可能变了（比如刚确认了新版本），同步到当前视频
     const fresh = findVideo(cur.owner, cur.fp).v;
-    if (fresh) Object.assign(cur, { name: fresh.name, title: fresh.title, group: fresh.group, version: fresh.version, versions: fresh.versions, missing: fresh.missing, suggest: fresh.suggest, holders: fresh.holders, backup: fresh.backup, local: fresh.local });
+    if (fresh) Object.assign(cur, { name: fresh.name, title: fresh.title, group: fresh.group, version: fresh.version, versions: fresh.versions, fileVer: fresh.fileVer, missing: fresh.missing, suggest: fresh.suggest, holders: fresh.holders, backup: fresh.backup, local: fresh.local });
     renderTitle();
     renderVersionBar();
     if (videoOffline && sourceOnline(cur.fp)) reloadVideo();
@@ -151,12 +152,17 @@ const baseName = (name) => name.replace(/\.[^.]+$/, '').replace(/[\s_\-.]*v\d+$/
 // 视频名称：分享者起过名就用名称，否则用文件名去掉扩展名和末尾的版本号
 const videoName = (v) => v.title || baseName(v.name) || v.name;
 const verLabel = (n) => `v${pad2(n)}`;
+// 文件名末尾的版本号，和程序里的 media.FileVersion 一样（_v03、 V3、-ver2，最多 3 位数字）
+const VER_MARK = /(^|[\s_\-.])(?:v|ver|version)\s*\d{1,3}$/i;
+// withVersion 把文件名（不含扩展名）末尾的版本号换成 n，和程序里的 media.WithVersion 一样
+const withVersion = (base, n) => (VER_MARK.test(base) ? base.replace(VER_MARK, `$1${verLabel(n)}`) : `${base}_${verLabel(n)}`);
 // 带版本号的名称，比如 LAX43_EP03_v02，列表和标题都用它。
-// 起过名的用"名称_v版本号"；没起名的，文件名里已经带版本号就照用，没带才补上
+// 起过名的用"名称_v版本号"；没起名的，文件名里的号就是版本号时照用文件名，
+// 不一样（文件名的号偏小，见 renderVersionBar）或者没带号时，显示程序编的号
 function versionedName(v) {
   if (v.title) return `${v.title}_${verLabel(v.version)}`;
   const base = v.name.replace(/\.[^.]+$/, '');
-  return /[\s_\-.]v\d+$/i.test(base) ? base : `${base}_${verLabel(v.version)}`;
+  return v.fileVer === v.version ? base : withVersion(base, v.version);
 }
 
 // 最新版本是主行，旧版本缩进列在下面。原主人那边已经没有这个文件、显示的是备份时，名字下面标"备份版"
@@ -299,16 +305,39 @@ function renderTitle() {
   $('#video-sub').title = $('#video-sub').textContent;
 }
 
-// 视频上方的提示：只在疑似新版本、需要分享者确认时出现
+// 视频上方的提示，只给分享者自己看：疑似新版本、需要确认时；文件名里的版本号比按顺序该有的小时
 function renderVersionBar() {
   const bar = $('#version-bar');
   let html = '';
   if (cur && cur.owner === S.me.id && cur.suggest) {
-    html = `<span>这个文件和「${esc(cur.suggest)}」名字相近，是它的新版本吗？</span>
-      ${btn('check', '是的', 'class="primary" data-ver="yes" title="是，归为新版本"')}${btn('x', '不是', 'data-ver="no"')}`;
+    html += `<div class="vb-row"><span>这个文件和「${esc(cur.suggest)}」名字相近，是它的新版本吗？</span>
+      ${btn('check', '是的', 'class="primary" data-ver="yes" title="是，归为新版本"')}${btn('x', '不是', 'data-ver="no"')}</div>`;
+  }
+  if (cur && cur.owner === S.me.id && !cur.missing && cur.fileVer && cur.fileVer !== cur.version) {
+    // 上一个版本：同组里号比它小的最大的那个
+    const prev = Math.max(...(S.mine || []).filter((v) => v.group === cur.group && v.version < cur.version).map((v) => v.version));
+    html += `<div class="vb-row"><span>文件名里是 ${verLabel(cur.fileVer)}，但它比 ${verLabel(prev)} 新，按顺序应该是 ${verLabel(cur.version)}。</span>
+      ${btn('rename', '改正', `class="primary" data-ver="fixname" title="把文件名改成 ${esc(fixedName(cur))}"`)}</div>`;
   }
   if (bar.innerHTML !== html) bar.innerHTML = html;
   bar.hidden = !html;
+}
+
+// fixedName 是"改正"以后的文件名：把文件名里偏小的版本号换成程序编的号
+const fixedName = (v) => withVersion(v.name.replace(/\.[^.]+$/, ''), v.version) + extOf(v.name);
+
+async function fixVersionName() {
+  const to = fixedName(cur);
+  const ok = await askConfirm('改正文件名', `「${cur.name}」改成「${to}」。\n\n剪辑软件工程里引用了这个文件的，会显示素材离线。批注不受影响。`, '改正', 'rename');
+  if (!ok) return;
+  try {
+    await post('/api/versions/fixname', { fp: cur.fp });
+    lastListKey = '';
+    await refresh();
+    toast(`已改成「${to}」`);
+  } catch (err) {
+    alert(err.message);
+  }
 }
 
 $('#player').addEventListener('click', async (e) => {
@@ -316,6 +345,7 @@ $('#player').addEventListener('click', async (e) => {
   if (!act || !cur) return;
   if (act === 'adjust') { openAdjustVersion(); return; }
   if (act === 'rename') { openRename(); return; }
+  if (act === 'fixname') { fixVersionName(); return; }
   try {
     await post('/api/versions/answer', { fp: cur.fp, yes: act === 'yes' });
     lastListKey = '';

@@ -61,6 +61,7 @@ func (a *App) routes() http.Handler {
 	api.HandleFunc("POST /api/versions/answer", a.apiVersionAnswer)
 	api.HandleFunc("POST /api/versions/move", a.apiVersionMove)
 	api.HandleFunc("POST /api/versions/rename", a.apiVersionRename)
+	api.HandleFunc("POST /api/versions/fixname", a.apiVersionFixName)
 	api.HandleFunc("POST /api/toggle", a.apiToggle)
 	// 提醒，见 notify.go
 	api.HandleFunc("GET /api/inbox", a.apiInbox)
@@ -474,6 +475,21 @@ func (a *App) apiVersionRename(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, map[string]any{"failed": failed})
+}
+
+// apiVersionFixName 把文件名里偏小的版本号改成程序编的号（视频上方"改正"）。
+func (a *App) apiVersionFixName(w http.ResponseWriter, r *http.Request) {
+	var body struct{ FP string }
+	if err := readJSON(r, &body); err != nil {
+		httpErr(w, errors.New("请求不对"), http.StatusBadRequest)
+		return
+	}
+	name, err := a.fixVersionName(body.FP)
+	if err != nil {
+		httpErr(w, err, http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, map[string]string{"name": name})
 }
 
 // apiToggle 改托盘里也有的三个开关：开机启动、静默运行、启动服务；

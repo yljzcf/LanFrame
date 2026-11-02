@@ -3,10 +3,12 @@ package media
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -29,6 +31,7 @@ type VideoEntry struct {
 	Title    string `json:"title,omitempty"` // 视频名称
 	Version  int    `json:"version"`
 	Versions int    `json:"versions"`
+	FileVer  int    `json:"fileVer,omitempty"` // 文件名里的版本号；和 Version 不一样说明文件名的号偏小，见 numberedVersions
 	Missing  bool   `json:"missing,omitempty"` // 文件已经不在了，只剩批注
 	Suggest  string `json:"suggest,omitempty"` // 只给本机：疑似哪个视频的新版本
 	// 备份（见 backups.go）：这是 Origin 的视频，存在列出它的这台电脑上。0.3.x 不认这两个字段，当成这台电脑自己的视频
@@ -74,6 +77,28 @@ var reVersionMark = regexp.MustCompile(`(?i)(^|[\s_\-.])(v|ver|version)\s*\d+|�
 func baseKey(name string) string {
 	name = strings.TrimSuffix(name, filepath.Ext(name))
 	return strings.ToLower(reVersionMark.ReplaceAllString(name, ""))
+}
+
+// 文件名末尾的版本号，比如 _v03、 V3、-ver2；前面必须是开头或分隔符。
+// 超过 3 位的数字（v20241031 这种日期）不算版本号。
+var reFileVersion = regexp.MustCompile(`(?i)(^|[\s_\-.])(?:v|ver|version)\s*(\d{1,3})$`)
+
+// FileVersion 是文件名末尾的版本号，没有时是 0。
+func FileVersion(name string) int {
+	m := reFileVersion.FindStringSubmatch(strings.TrimSuffix(name, filepath.Ext(name)))
+	if m == nil {
+		return 0
+	}
+	n, _ := strconv.Atoi(m[2])
+	return n
+}
+
+// WithVersion 把文件名（不含扩展名）末尾的版本号换成 n，比如 X_v02 → X_v06；没有版本号的补上 _v06。
+func WithVersion(base string, n int) string {
+	if reFileVersion.MatchString(base) {
+		return reFileVersion.ReplaceAllString(base, fmt.Sprintf("${1}v%02d", n))
+	}
+	return fmt.Sprintf("%s_v%02d", base, n)
 }
 
 func (vs *Versions) groupOfLocked(fp string) (*VersionGroup, int) {
@@ -242,25 +267,61 @@ func (vs *Versions) SetName(group, name string) error {
 	return nil
 }
 
-// Members 是版本组里的所有版本，按版本号排好（第 i 个就是 v(i+1)）。
-func (vs *Versions) Members(group string) ([]*VideoInfo, error) {
+// Numbered 是版本组里的一个版本和它的版本号。
+type Numbered struct {
+	*VideoInfo
+	Version int
+}
+
+// Members 是版本组里的所有版本和它们的版本号，从旧到新。
+func (vs *Versions) Members(group string) ([]Numbered, error) {
 	vs.mu.Lock()
 	defer vs.mu.Unlock()
 	g := vs.groupByIDLocked(group)
 	if g == nil {
 		return nil, errors.New("找不到这个视频")
 	}
-	return sortedVersions(g), nil
+	return numberedVersions(g), nil
 }
 
-// sortedVersions 按文件修改时间排版本，版本号就是排序后的位置。
-func sortedVersions(g *VersionGroup) []*VideoInfo {
+// VersionOf 是自己的视频里这个文件的版本号；备份不在自己的版本组里，找不到。
+func (vs *Versions) VersionOf(fp string) (int, error) {
+	vs.mu.Lock()
+	defer vs.mu.Unlock()
+	g, _ := vs.groupOfLocked(fp)
+	if g == nil {
+		return 0, errors.New("找不到这个视频")
+	}
+	for _, n := range numberedVersions(g) {
+		if n.FP == fp {
+			return n.Version, nil
+		}
+	}
+	return 0, errors.New("找不到这个视频")
+}
+
+// numberedVersions 按文件修改时间从旧到新编版本号。文件名里带版本号、并且不比"上一个版本的号 + 1"小的，
+// 照文件名的号（可以跳号，只有一个 X_v03 就是 v03）；没带号或者号偏小的，用"上一个版本的号 + 1"，
+// 带了号却偏小的，网页上提示改正文件名。"上一个版本的号"是它实际编到的号（可能来自文件名），
+// 不是排第几个：按排第几个算，X_v05（旧）、X_v02（新）会编成 v05、v02，新的反而号小。
+// 这样号从旧到新一定递增、不会重号，最新的版本号最大。
+func numberedVersions(g *VersionGroup) []Numbered {
 	vers := append([]*VideoInfo{}, g.Versions...)
 	sort.SliceStable(vers, func(i, j int) bool { return vers[i].ModTime < vers[j].ModTime })
-	return vers
+	out := make([]Numbered, len(vers))
+	next := 1
+	for i, v := range vers {
+		n := FileVersion(v.Name)
+		if n < next {
+			n = next
+		}
+		out[i] = Numbered{v, n}
+		next = n + 1
+	}
+	return out
 }
 
-// Listing 生成视频列表：每组按文件修改时间编 v1、v2……
+// Listing 生成视频列表：每组的版本号见 numberedVersions。
 // 文件已经不在、但还有批注的旧版本也列出来，方便对照之前的意见。
 func (vs *Versions) Listing(present []*VideoInfo, hasAnn map[string]bool) []*VideoEntry {
 	vs.mu.Lock()
@@ -271,16 +332,17 @@ func (vs *Versions) Listing(present []*VideoInfo, hasAnn map[string]bool) []*Vid
 	}
 	out := []*VideoEntry{}
 	for _, g := range vs.Groups {
-		vers := sortedVersions(g)
-		for i, e := range vers {
+		vers := numberedVersions(g)
+		for _, e := range vers {
 			v, missing := now[e.FP], false
 			if v == nil {
 				if !hasAnn[e.FP] {
 					continue
 				}
-				v, missing = e, true
+				v, missing = e.VideoInfo, true
 			}
-			entry := &VideoEntry{VideoInfo: *v, Group: g.ID, Title: g.Name, Version: i + 1, Versions: len(vers), Missing: missing}
+			entry := &VideoEntry{VideoInfo: *v, Group: g.ID, Title: g.Name, Version: e.Version, Versions: len(vers),
+				FileVer: FileVersion(e.Name), Missing: missing}
 			if target := vs.groupByIDLocked(vs.Suggest[e.FP]); target != nil && target != g {
 				entry.Suggest = displayName(target)
 			}
@@ -295,7 +357,7 @@ func displayName(g *VersionGroup) string {
 	if g.Name != "" {
 		return g.Name
 	}
-	vers := sortedVersions(g)
+	vers := numberedVersions(g)
 	if len(vers) == 0 {
 		return ""
 	}

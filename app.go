@@ -308,12 +308,12 @@ func (a *App) renameVideo(group, name string, renameFiles bool) ([]string, error
 	}
 	var failed []string
 	if renameFiles {
-		for i, m := range members {
+		for _, m := range members {
 			v := a.videos.Get(m.FP)
 			if v == nil {
 				continue // 这个版本的文件已经不在了
 			}
-			target := filepath.Join(filepath.Dir(v.Path()), fmt.Sprintf("%s_v%02d%s", name, i+1, filepath.Ext(v.Path())))
+			target := filepath.Join(filepath.Dir(v.Path()), fmt.Sprintf("%s_v%02d%s", name, m.Version, filepath.Ext(v.Path())))
 			if target == v.Path() {
 				continue
 			}
@@ -335,6 +335,38 @@ func (a *App) renameVideo(group, name string, renameFiles bool) ([]string, error
 	}
 	a.rescan()
 	return failed, nil
+}
+
+// fixVersionName 把自己视频的文件名里偏小的版本号改成程序编的号，比如 X_v02.mp4 → X_v06.mp4
+// （版本号规则见 media 的 numberedVersions）。指纹不变，批注不受影响。返回改好的文件名。
+func (a *App) fixVersionName(fp string) (string, error) {
+	vs := a.getVersions()
+	if vs == nil {
+		return "", errors.New("还没有设置共享文件夹")
+	}
+	ver, err := vs.VersionOf(fp)
+	if err != nil {
+		return "", err
+	}
+	v := a.videos.Get(fp)
+	if v == nil {
+		return "", errors.New("这个版本的文件已经不在了")
+	}
+	ext := filepath.Ext(v.Path())
+	name := media.WithVersion(strings.TrimSuffix(filepath.Base(v.Path()), ext), ver) + ext
+	target := filepath.Join(filepath.Dir(v.Path()), name)
+	if target == v.Path() {
+		return name, nil
+	}
+	if _, err := os.Stat(target); err == nil {
+		return "", fmt.Errorf("同一个文件夹里已经有 %s", name)
+	}
+	if err := os.Rename(v.Path(), target); err != nil {
+		log.Printf("改名失败 %s -> %s：%v", v.Path(), target, err)
+		return "", errors.New("改名失败，文件可能正在被使用（比如同事正在播放），稍后再试")
+	}
+	a.rescan()
+	return name, nil
 }
 
 func (a *App) start() {

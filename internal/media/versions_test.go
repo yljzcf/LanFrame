@@ -144,3 +144,73 @@ func TestVersionSuggestAndMove(t *testing.T) {
 		}
 	}
 }
+
+func TestFileVersion(t *testing.T) {
+	cases := map[string]int{
+		"X_v03.mp4": 3, "X V3.mov": 3, "X-ver2.mp4": 2, "X.version 12.mp4": 12, "v7.mp4": 7,
+		"X.mp4": 0, "MV01.mp4": 0, "X_v20241031.mp4": 0, "X_v03 (1).mp4": 0,
+	}
+	for name, want := range cases {
+		if got := FileVersion(name); got != want {
+			t.Errorf("%s：%d，应该是 %d", name, got, want)
+		}
+	}
+	if got := WithVersion("X_v02", 6); got != "X_v06" {
+		t.Errorf("WithVersion：%s", got)
+	}
+	if got := WithVersion("X-ver2", 6); got != "X-v06" {
+		t.Errorf("WithVersion：%s", got)
+	}
+	if got := WithVersion("粗剪", 1); got != "粗剪_v01" {
+		t.Errorf("WithVersion：%s", got)
+	}
+}
+
+// 版本号：按修改时间从旧到新编，文件名的号不比"上一个版本的号 + 1"小就照用，否则接着上一个版本的号编。
+// "上一个版本的号"是它实际编到的号，来自文件名时也一样。
+func TestVersionNumbers(t *testing.T) {
+	cases := []struct {
+		files []string // 从旧到新
+		want  []int
+	}{
+		{[]string{"X_v03.mp4"}, []int{3}},
+		{[]string{"X_v02.mp4", "X_v05.mp4"}, []int{2, 5}},
+		{[]string{"X_v05.mp4", "X_v02.mp4"}, []int{5, 6}}, // 上一个是文件名定的 v05，接着编 v06
+		{[]string{"X_v05.mp4", "X.mp4"}, []int{5, 6}},     // 没带号的也接着 v05
+		{[]string{"X_v02.mp4", "X_v01.mp4"}, []int{2, 3}},
+		{[]string{"X_v02.mp4", "a/X_v02.mp4"}, []int{2, 3}}, // 同号
+		{[]string{"X.mp4", "X_v03.mp4", "X 新.mp4"}, []int{1, 3, 4}},
+		{[]string{"X_v03.mp4", "X_v03 改.mp4", "X_v04.mp4"}, []int{3, 4, 5}},
+		{[]string{"X.mp4", "X_v20241031.mp4"}, []int{1, 2}},
+	}
+	for _, c := range cases {
+		g := &VersionGroup{ID: "g"}
+		var present []*VideoInfo
+		for i, name := range c.files {
+			v := &VideoInfo{FP: name, Name: filepath.Base(name), Dir: filepath.Dir(name), ModTime: int64(i + 1)}
+			g.Versions = append(g.Versions, v)
+			present = append(present, v)
+		}
+		// 倒着放进组里，确认只看修改时间不看放进来的顺序
+		for i, j := 0, len(g.Versions)-1; i < j; i, j = i+1, j-1 {
+			g.Versions[i], g.Versions[j] = g.Versions[j], g.Versions[i]
+		}
+		vs := &Versions{Groups: []*VersionGroup{g}, Suggest: map[string]string{}, Dismissed: map[string]bool{}}
+		members, _ := vs.Members("g")
+		got := map[string]int{}
+		for _, e := range vs.Listing(present, nil) {
+			got[e.FP] = e.Version
+			if e.FileVer != FileVersion(e.Name) {
+				t.Errorf("%v：%s 的 FileVer 是 %d", c.files, e.Name, e.FileVer)
+			}
+		}
+		for i, name := range c.files {
+			if members[i].FP != name || members[i].Version != c.want[i] || got[name] != c.want[i] {
+				t.Errorf("%v：%s 编成 Members %d / Listing %d，应该是 %d", c.files, name, members[i].Version, got[name], c.want[i])
+			}
+		}
+		if last := c.files[len(c.files)-1]; displayName(g) != filepath.Base(last) {
+			t.Errorf("%v：没起名时显示 %s，应该是最新的 %s", c.files, displayName(g), last)
+		}
+	}
+}

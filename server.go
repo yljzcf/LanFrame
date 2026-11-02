@@ -51,6 +51,7 @@ func (a *App) routes() http.Handler {
 	api.HandleFunc("POST /api/setup", a.apiSetup)
 	api.HandleFunc("GET /api/fs", a.apiFS)
 	api.HandleFunc("POST /api/peers", a.apiAddPeer)
+	api.HandleFunc("POST /api/people/remove", a.apiRemovePerson)
 	api.HandleFunc("POST /api/rescan", a.apiRescan)
 	api.HandleFunc("GET /api/stream/{fp}", a.apiStream)
 	api.HandleFunc("GET /api/annotations", a.apiAnnotations)
@@ -415,6 +416,20 @@ func (a *App) apiAddPeer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, info)
+}
+
+// apiRemovePerson 把离线的人从成员列表里移除（成员窗口里的"移除"）。
+func (a *App) apiRemovePerson(w http.ResponseWriter, r *http.Request) {
+	var body struct{ ID string }
+	if err := readJSON(r, &body); err != nil {
+		httpErr(w, errors.New("请求不对"), http.StatusBadRequest)
+		return
+	}
+	if err := a.removePerson(body.ID); err != nil {
+		httpErr(w, err, http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, map[string]bool{"ok": true})
 }
 
 func (a *App) apiRescan(w http.ResponseWriter, r *http.Request) {

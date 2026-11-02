@@ -46,6 +46,7 @@ type Peer struct {
 	Update      string              `json:"update,omitempty"`  // 对方缓存里安装包都下载好、可以给别人的版本
 	Files       bool                `json:"files"`             // 对方开放了共享文件夹里的文件给同事下载
 	Videos      []*media.VideoEntry `json:"videos"`
+	Team        bool                `json:"-"` // 拿到过对方的视频列表，确认是同一个团队（口令一致），才记进成员目录
 }
 
 type Peers struct {
@@ -53,7 +54,7 @@ type Peers struct {
 	byID     map[string]*Peer
 	syncing  map[string]bool
 	rejected map[string]time.Time // "电脑 ID/记录 ID" -> 拒绝的时间。按电脑分开记，一台电脑上的副本坏了，还能从别的电脑拿到好的
-	known    map[string]knownPeer // 以前见过的同事，存在 people.json 里，见 people()
+	known    map[string]knownPeer // 以前见过的同事和移除过的人，存在 people.json 里，见 people()
 	saved    []byte               // 上次写进 people.json 的内容，没变就不写
 }
 
@@ -61,11 +62,15 @@ func newPeers() *Peers {
 	return &Peers{byID: map[string]*Peer{}, syncing: map[string]bool{}, rejected: map[string]time.Time{}, known: map[string]knownPeer{}}
 }
 
-// knownPeer 是见过的同事。存在配置目录的 people.json 里，重启以后离线的人也还在成员列表里。
+// knownPeer 是见过的同事，存在配置目录的 people.json 里，重启以后离线的人也还在成员列表里。
+// 只记确认过口令一致的（Team）：口令不一致的不是一个团队，比如同一个局域网里别的团队、开着的测试程序。
+// 用户移除的人记成 Removed，批注里出现过也不再列出；他再上线、口令一致时自动回到列表里。
 type knownPeer struct {
 	Name     string `json:"name"`
-	LastSeen int64  `json:"lastSeen"`
+	LastSeen int64  `json:"lastSeen,omitempty"`
 	Version  string `json:"version,omitempty"`
+	Team     bool   `json:"team,omitempty"`
+	Removed  bool   `json:"removed,omitempty"`
 }
 
 func (ps *Peers) loadKnown(dataDir string) {
@@ -79,19 +84,29 @@ func (ps *Peers) loadKnown(dataDir string) {
 		log.Printf("成员目录 people.json 坏了，从头记：%v", err)
 		ps.known = map[string]knownPeer{}
 	}
+	for id, k := range ps.known {
+		if !k.Team && !k.Removed { // 没确认过是同一个团队的不留
+			delete(ps.known, id)
+		}
+	}
 	ps.saved = data
 }
 
-// saveKnown 把这次运行见过的同事记进 people.json，定时调用。
+// saveKnown 把这次运行见过、确认是同一个团队的同事记进 people.json，定时调用；口令不一致的从目录里拿掉。
 func (ps *Peers) saveKnown(dataDir string) {
 	ps.mu.Lock()
 	for id, p := range ps.byID {
-		k := ps.known[id]
-		k.Name, k.LastSeen = p.Name, p.LastSeen
-		if p.Version != "" {
-			k.Version = p.Version
+		switch {
+		case p.KeyMismatch:
+			delete(ps.known, id)
+		case p.Team:
+			k := ps.known[id]
+			k.Name, k.LastSeen, k.Team, k.Removed = p.Name, p.LastSeen, true, false
+			if p.Version != "" {
+				k.Version = p.Version
+			}
+			ps.known[id] = k
 		}
-		ps.known[id] = k
 	}
 	data, _ := json.MarshalIndent(ps.known, "", "  ")
 	same := bytes.Equal(data, ps.saved)
@@ -133,13 +148,21 @@ func (a *App) people(peers []Peer) []Person {
 		}
 		return p
 	}
+	removed := map[string]bool{}
 	a.peers.mu.Lock()
 	for id, k := range a.peers.known {
+		if k.Removed {
+			removed[id] = true
+			continue
+		}
 		p := get(id)
 		p.Name, p.LastSeen, p.Version = k.Name, k.LastSeen, k.Version
 	}
 	a.peers.mu.Unlock()
 	for _, x := range peers {
+		if removed[x.ID] && !x.Online {
+			continue
+		}
 		p := get(x.ID)
 		p.Name, p.Online, p.KeyMismatch = x.Name, x.Online, x.KeyMismatch
 		if x.LastSeen > 0 {
@@ -151,6 +174,9 @@ func (a *App) people(peers []Peer) []Person {
 	}
 	if st := a.getStore(); st != nil {
 		for id, r := range st.People() {
+			if removed[id] {
+				continue
+			}
 			if p := byID[id]; p == nil || p.Name == "" || (!p.Online && r.Time > p.LastSeen) {
 				get(id).Name = r.Name
 			}
@@ -169,6 +195,30 @@ func (a *App) people(peers []Peer) []Person {
 		return out[i].LastSeen > out[j].LastSeen
 	})
 	return out
+}
+
+// removePerson 把一个离线的人从成员列表里移除（比如离职的同事、不再用的电脑）。
+// 写过的批注不受影响；他再上线、口令一致时自动回到列表里。
+func (a *App) removePerson(id string) error {
+	if id == a.me().ID {
+		return errors.New("不能移除自己")
+	}
+	ps := a.peers
+	ps.mu.Lock()
+	if p := ps.byID[id]; p != nil && time.Since(time.UnixMilli(p.LastSeen)) < onlineTimeout {
+		ps.mu.Unlock()
+		return errors.New("对方在线，不能移除")
+	}
+	k := ps.known[id]
+	if p := ps.byID[id]; p != nil && k.Name == "" {
+		k.Name = p.Name
+	}
+	k.Team, k.Removed = false, true
+	ps.known[id] = k
+	delete(ps.byID, id)
+	ps.mu.Unlock()
+	ps.saveKnown(a.dataDir)
+	return nil
 }
 
 func (ps *Peers) seen(id, name, addr string) {
@@ -481,9 +531,9 @@ func (a *App) syncPeer(p Peer) {
 	a.peers.update(p.ID, func(p *Peer) {
 		p.KeyMismatch = errors.Is(err, errForbidden)
 		if err == nil {
-			p.Videos = videos
+			p.Videos, p.Team = videos, true
 		} else if p.KeyMismatch {
-			p.Videos = nil
+			p.Videos, p.Team = nil, false
 		}
 	})
 	if err != nil {

@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -81,5 +83,82 @@ func TestRejectedRecordNotRefetched(t *testing.T) {
 	}
 	if b.getStore().Has(recID) {
 		t.Fatal("不应该收下校验不通过的记录")
+	}
+}
+
+// 成员目录只记口令一致的同事；没确认过的旧记录不留；离线的人能移除，再上线时自动回来。
+func TestPeopleDirectory(t *testing.T) {
+	dataDir := t.TempDir()
+	// 以前留下的、没确认过是同一个团队的记录（比如同一个局域网里开着的测试程序）
+	os.WriteFile(filepath.Join(dataDir, "people.json"), []byte(`{"stale":{"name":"测试C","lastSeen":1}}`), 0o644)
+	a, err := newApp(dataDir, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := a.setup("A", t.TempDir(), "口令"); err != nil {
+		t.Fatal(err)
+	}
+	peer := func(name, key string) (*App, string) {
+		p, err := newApp(t.TempDir(), 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := p.setup(name, t.TempDir(), key); err != nil {
+			t.Fatal(err)
+		}
+		srv := httptest.NewServer(p.routes())
+		t.Cleanup(srv.Close)
+		addr := strings.TrimPrefix(srv.URL, "http://")
+		a.peers.seen(p.me().ID, name, addr)
+		a.syncPeer(Peer{ID: p.me().ID, Addr: addr})
+		return p, addr
+	}
+	b, bAddr := peer("B", "口令")
+	c, _ := peer("C", "别的口令")
+	names := func() map[string]bool {
+		_, peers := a.videoView()
+		out := map[string]bool{}
+		for _, p := range a.people(peers) {
+			out[p.Name] = true
+		}
+		return out
+	}
+
+	a.peers.saveKnown(dataDir)
+	var saved map[string]knownPeer
+	data, _ := os.ReadFile(filepath.Join(dataDir, "people.json"))
+	json.Unmarshal(data, &saved)
+	if !saved[b.me().ID].Team || len(saved) != 1 {
+		t.Fatalf("people.json 应该只记口令一致的 B：%s", data)
+	}
+	if _, ok := saved[c.me().ID]; ok {
+		t.Fatal("口令不一致的 C 不应该记下来")
+	}
+	if names()["测试C"] {
+		t.Fatal("没确认过的旧记录不应该出现在成员列表里")
+	}
+
+	if err := a.removePerson(b.me().ID); err == nil {
+		t.Fatal("B 在线，不应该能移除")
+	}
+	a.peers.update(b.me().ID, func(p *Peer) { p.LastSeen = 0 }) // B 下线了
+	if err := a.removePerson(b.me().ID); err != nil {
+		t.Fatal(err)
+	}
+	if names()["B"] {
+		t.Fatal("移除后 B 不应该在成员列表里")
+	}
+	// 重启后仍然是移除的
+	a.peers = newPeers()
+	a.peers.loadKnown(dataDir)
+	if names()["B"] {
+		t.Fatal("重启后 B 仍然应该是移除的")
+	}
+	// B 再上线：自动回到列表里
+	a.peers.seen(b.me().ID, "B", bAddr)
+	a.syncPeer(Peer{ID: b.me().ID, Addr: bAddr})
+	a.peers.saveKnown(dataDir)
+	if !names()["B"] {
+		t.Fatal("B 再上线后应该回到成员列表里")
 	}
 }

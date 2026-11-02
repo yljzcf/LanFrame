@@ -1397,7 +1397,7 @@ $('#btn-inbox').onclick = () => S?.configured && openInbox();
 
 function openPeople() {
   openModal('people', `<h2>成员</h2>
-    <p class="muted">一台电脑就是一个人。同事打开程序后一般会自动出现，绿点表示在线。</p>
+    <p class="muted">一台电脑就是一个人。同事打开程序后一般会自动出现，绿点表示在线；团队口令不一致的不算成员。</p>
     <div id="people-list" class="people-list"></div>
     <div class="section">
       <div class="section-title">按 IP 添加电脑 <span class="hint">（同事过一会儿还没出现，比如不在同一网段）</span></div>
@@ -1420,7 +1420,30 @@ function openPeople() {
   };
   $('#ap-ok').onclick = ok;
   $('#ap-addr').addEventListener('keydown', (e) => { if (e.key === 'Enter') ok(); });
+  $('#people-list').onclick = (e) => {
+    const id = e.target.closest('[data-rm]')?.dataset.rm;
+    if (id) removePerson(id);
+  };
   renderPeopleList();
+}
+
+// removePerson 把离线的人从成员列表里移除。确认窗口会盖住成员窗口，确认或取消后再打开成员窗口。
+async function removePerson(id) {
+  const name = personName(id);
+  const ok = await askConfirm('移除成员', `从成员列表里移除「${name}」？\n\n写过的批注不受影响。对方再打开程序、团队口令一致时，会自动回到列表里。`, '移除', 'x');
+  let err = '';
+  if (ok) {
+    try {
+      await post('/api/people/remove', { id });
+      lastListKey = '';
+      await refresh();
+    } catch (e) {
+      err = e.message;
+    }
+  }
+  openPeople();
+  if (err) $('#ap-err').textContent = err;
+  else if (ok) toast(`已移除「${name}」`);
 }
 
 function renderPeopleList() {
@@ -1430,11 +1453,12 @@ function renderPeopleList() {
     const info = [];
     if (me) info.push('本机');
     else if (p.online) info.push(p.addr ? p.addr.replace(/:\d+$/, '') : '', '在线');
-    else info.push(p.lastSeen ? `${fmtAgo(p.lastSeen)}在线` : '只在批注里出现过');
+    else info.push(p.lastSeen ? `最后在线 ${fmtAgo(p.lastSeen)}` : '只在批注里出现过');
     if (p.version) info.push(p.version);
+    const rm = me || p.online ? '' : btn('x', '移除', `class="mini" data-rm="${esc(p.id)}" title="从成员列表里移除，比如离职的同事、不再用的电脑；对方再上线时会自动回来"`);
     return `<div class="person"><span class="dot ${me || p.online ? 'on' : ''}"></span>
       <b>${esc(me ? nameOf(S.me.id) : personName(p.id, p.name))}</b><span class="muted p-code">${esc(p.code)}</span>
-      <span class="muted p-info">${p.keyMismatch ? '<span class="warn">团队口令不一致</span> · ' : ''}${esc(info.filter(Boolean).join(' · '))}</span></div>`;
+      <span class="muted p-info">${p.keyMismatch ? '<span class="warn">团队口令不一致</span> · ' : ''}${esc(info.filter(Boolean).join(' · '))}</span>${rm}</div>`;
   };
   const html = row({ ...S.me, version: S.version }, true) + (S.people || []).map((p) => row(p, false)).join('');
   if (box.dataset.html !== html) {
